@@ -39,13 +39,6 @@ def setup_logging():
 
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    # Truncate existing log file so every application startup starts with a clean log
-    try:
-        with open(LOG_FILE_PATH, "w", encoding="utf-8") as f:
-            pass
-    except Exception:
-        pass
-
     level_num = getattr(logging, LOG_LEVEL.upper(), logging.INFO)
     formatter = logging.Formatter(
         fmt="[%(asctime)s] [%(levelname)-7s] [%(name)s] %(message)s",
