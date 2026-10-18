@@ -123,17 +123,16 @@ class LoginCard(QGroupBox):
         """Update visual state based on current authorization status"""
         self.is_logged_in = is_logged
         self.current_role = role_name
-        is_cn = (self.current_lang == "CN")
 
         if is_logged:
-            badge_text = f"● {role_name}" if role_name else ("● 已登录" if is_cn else "● Logged In")
+            badge_text = f"● {role_name}" if role_name else tr("● Logged In", self.current_lang)
             self.badge_status.setText(badge_text)
             self.badge_status.setStyleSheet("""
                 font-size: 10px; font-weight: bold; color: #059669;
                 background-color: #D1FAE5; border: 1px solid #A7F3D0;
                 border-radius: 3px; padding: 2px 8px;
             """)
-            self.btn_login.setText("注销" if is_cn else "Logout")
+            self.btn_login.setText(tr("Logout", self.current_lang))
             self.btn_login.setStyleSheet("""
                 QPushButton {
                     background-color: #EF4444; color: white; font-weight: bold;
@@ -142,13 +141,13 @@ class LoginCard(QGroupBox):
                 QPushButton:hover { background-color: #DC2626; }
             """)
         else:
-            self.badge_status.setText("○ 未登录" if is_cn else "○ Logged Out")
+            self.badge_status.setText(tr("○ Logged Out", self.current_lang))
             self.badge_status.setStyleSheet("""
                 font-size: 10px; font-weight: bold; color: #64748B;
                 background-color: #F1F5F9; border: 1px solid #E2E8F0;
                 border-radius: 3px; padding: 2px 8px;
             """)
-            self.btn_login.setText("登录" if is_cn else "Login")
+            self.btn_login.setText(tr("Login", self.current_lang))
             self.btn_login.setStyleSheet("""
                 QPushButton {
                     background-color: #0F172A; color: white; font-weight: bold;
@@ -177,16 +176,15 @@ class LoginCard(QGroupBox):
                 else:
                     QMessageBox.warning(
                         self,
-                        "密码错误" if self.current_lang == "CN" else "Password Error",
-                        msg if msg else ("密码不正确！" if self.current_lang == "CN" else "Incorrect password!")
+                        tr("Password Error", self.current_lang),
+                        msg if msg else tr("Incorrect password!", self.current_lang)
                     )
             else:
                 self.login_changed.emit(True)
 
     def retranslate_ui(self, lang: str = "EN"):
         self.current_lang = lang
-        is_cn = (lang == "CN")
-        self.setTitle("登录" if is_cn else "Login")
-        self.lbl_pwd.setText("密码:" if is_cn else "Password:")
-        self.edit_password.setPlaceholderText("请输入密码..." if is_cn else "Enter password...")
+        self.setTitle(tr("Login", lang))
+        self.lbl_pwd.setText(tr("Password:", lang))
+        self.edit_password.setPlaceholderText(tr("Enter password...", lang))
         self.set_state(self.is_logged_in, self.current_role)

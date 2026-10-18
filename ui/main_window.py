@@ -8,7 +8,7 @@ import os
 from datetime import datetime
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QStackedWidget,
-    QLabel, QPushButton, QButtonGroup, QFrame
+    QLabel, QPushButton, QButtonGroup, QFrame, QMessageBox
 )
 from PyQt6.QtCore import QTimer, Qt, QSize
 from PyQt6.QtGui import QFont, QColor, QPixmap, QIcon
@@ -40,6 +40,13 @@ class MainWindow(QMainWindow):
         self.opcua_service = opcua_service
         self.current_lang = "EN"
 
+        # Performance & Render State Cache (dirty-checking to avoid redundant setStyleSheet & disk I/O at 10Hz)
+        self._last_has_unacked = None
+        self._last_active_alarm_count = None
+        self._last_safety_status_key = None
+        self._last_opcua_state_key = None
+        self._last_status_lang = None
+
         self.setWindowTitle(WINDOW_TITLE)
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setMinimumSize(WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT)
@@ -48,6 +55,7 @@ class MainWindow(QMainWindow):
 
         # Connect model signals
         self.plc.state_changed.connect(self.update_sidebar_status)
+        self.plc.msgbox_triggered.connect(self._on_plc_msgbox_triggered)
         self.alarm_mgr.alarms_changed.connect(self.update_alarm_badge)
 
         # Simulation & Clock Timer
@@ -112,12 +120,12 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         # 1. Clock & Version block (Top of Left Column)
-        self.lbl_clock = QLabel("00:00:00")
+        self.lbl_clock = QLabel("--:--:--")
         self.lbl_clock.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_clock.setStyleSheet("font-size: 15px; font-weight: bold; color: #111827;")
-        self.lbl_date = QLabel("07/23/2018")
+        self.lbl_clock.setStyleSheet("font-size: 15px; font-weight: bold; color: #9CA3AF;")
+        self.lbl_date = QLabel("--/--/----")
         self.lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_date.setStyleSheet("font-size: 12px; color: #374151; margin-top: 2px;")
+        self.lbl_date.setStyleSheet("font-size: 12px; color: #9CA3AF; margin-top: 2px;")
         self.lbl_ver = QLabel(f"SW: {self.plc.pac_version_sw}\nHW: {self.plc.pac_version_hw}")
         self.lbl_ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_ver.setStyleSheet("font-size: 13px; font-weight: bold; color: #1F2937; margin-top: 4px;")
@@ -167,9 +175,9 @@ class MainWindow(QMainWindow):
         self.lbl_safe_title = QLabel("Main Control")
         self.lbl_safe_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_safe_title.setStyleSheet("font-size: 12px; font-weight: bold; color: #111827; margin-top: 10px;")
-        self.lbl_safety_status = QLabel("Safety Ok")
+        self.lbl_safety_status = QLabel("--")
         self.lbl_safety_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_safety_status.setStyleSheet("font-size: 12px; color: #111827; margin-top: 2px;")
+        self.lbl_safety_status.setStyleSheet("font-size: 12px; font-weight: bold; color: #64748B; margin-top: 2px;")
 
         layout.addWidget(self.lbl_c_title)
         layout.addWidget(self.lbl_ctrl_source)
@@ -228,7 +236,7 @@ class MainWindow(QMainWindow):
         # Left Title Box
         title_box = QVBoxLayout()
         title_box.setSpacing(2)
-        self.lbl_page_title = QLabel("Inspect")
+        self.lbl_page_title = QLabel("Overview")
         self.lbl_page_title.setStyleSheet("font-size: 24px; font-weight: bold; color: #111111;")
         self.lbl_page_subtitle = QLabel("Pitch system data as pressure, temperature, etc. are shown in this page")
         self.lbl_page_subtitle.setStyleSheet("font-size: 11px; font-style: italic; color: #555555;")
@@ -347,8 +355,11 @@ class MainWindow(QMainWindow):
         self.nav_buttons = []
 
         res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
+        self._pix_alarm_red = QPixmap(os.path.join(res_dir, "nav_alarm.png")).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        self._pix_alarm_gray = QPixmap(os.path.join(res_dir, "nav_alarm_gray.png")).scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+
         nav_items = [
-            ("nav_inspect.png", "Inspect", 0),
+            ("nav_inspect.png", "Overview", 0),
             ("nav_alarm.png", "Alarm", 1),
             ("nav_manual.png", "Manual", 2),
             ("nav_maintenance.png", "Maintenance", 3),
@@ -437,7 +448,7 @@ class MainWindow(QMainWindow):
             self.nav_buttons.append(btn)
 
         self.PAGE_INFO = [
-            ("Inspect", "Pitch system data as pressure, temperature, etc. are shown in this page"),
+            ("Overview", "Pitch system data as pressure, temperature, etc. are shown in this page"),
             ("Alarm", "Active alarms and historical alarm logs"),
             ("Manual", "Manual pitching and valve test operations"),
             ("Maintenance", "Sensor calibration and diagnostic tools"),
@@ -541,18 +552,19 @@ class MainWindow(QMainWindow):
             self.page_file.retranslate_ui(self.current_lang)
 
     def on_hexagon_clicked(self):
-        if self.opcua_service and self.plc.is_opcua_online:
-            if self.btn_hex.mode == "START":
-                self.opcua_service.send_start()
-            else:
-                self.opcua_service.send_stop()
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot send START/STOP command!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
+        if self.btn_hex.mode == "START":
+            self.opcua_service.send_start(self.plc.blade_state)
         else:
-            if self.btn_hex.mode == "START":
-                self.plc.start_pressed()
-            else:
-                self.plc.stop_pressed()
+            self.opcua_service.send_stop()
 
     def update_sidebar_status(self):
+        self.update_clock()
         if hasattr(self, "lbl_ver"):
             self.lbl_ver.setText(f"SW: {self.plc.pac_version_sw}\nHW: {self.plc.pac_version_hw}")
         self.lbl_blade_state.setText(tr(self.plc.blade_state, self.current_lang))
@@ -574,32 +586,31 @@ class MainWindow(QMainWindow):
                 # In transition / Aborting
                 self.btn_hex.setEnabled(False)
         else:
-            if self.plc.blade_state == STATE_ABORTED:
-                self.btn_hex.set_mode("START")
-                self.btn_hex.setEnabled(True)
-            elif self.plc.blade_state == STATE_ABORTING:
-                self.btn_hex.setEnabled(False)
-            else:
-                self.btn_hex.set_mode("STOP")
-                self.btn_hex.setEnabled(True)
+            self.btn_hex.setEnabled(False)
 
-        # Update Safety status
-        if self.plc.safety_ok:
-            self.lbl_safety_status.setText(tr("Safety Ok", self.current_lang))
-            self.lbl_safety_status.setStyleSheet("font-family: 'Segoe UI', Arial; font-size: 12px; color: #111827;")
-        else:
-            self.lbl_safety_status.setText(tr("Emergency", self.current_lang))
-            self.lbl_safety_status.setStyleSheet("font-family: 'Segoe UI', Arial; font-size: 12px; font-weight: bold; color: #DC2626;")
+        # Update Safety status (with dirty check to avoid redundant setStyleSheet)
+        safety_status_key = (self.plc.is_opcua_online, self.plc.safety_ok, self.current_lang)
+        if safety_status_key != getattr(self, "_last_safety_status_key", None):
+            self._last_safety_status_key = safety_status_key
+            if not self.plc.is_opcua_online:
+                self.lbl_safety_status.setText("--")
+                self.lbl_safety_status.setStyleSheet("font-family: 'Segoe UI', Arial; font-size: 12px; font-weight: bold; color: #64748B; margin-top: 2px;")
+            elif self.plc.safety_ok:
+                self.lbl_safety_status.setText(tr("Safety Ok", self.current_lang))
+                self.lbl_safety_status.setStyleSheet("font-family: 'Segoe UI', Arial; font-size: 12px; color: #111827; margin-top: 2px;")
+            else:
+                self.lbl_safety_status.setText(tr("Emergency", self.current_lang))
+                self.lbl_safety_status.setStyleSheet("font-family: 'Segoe UI', Arial; font-size: 12px; font-weight: bold; color: #DC2626; margin-top: 2px;")
 
         # Update bottom line
         status_text = tr(self.plc.bottom_status_msg, self.current_lang)
-        self.lbl_bottom_status.setText(status_text)
-        self.lbl_bottom_status.setToolTip(status_text)
+        if self.lbl_bottom_status.text() != status_text:
+            self.lbl_bottom_status.setText(status_text)
+            self.lbl_bottom_status.setToolTip(status_text)
 
-        # Update bottom OPC UA status
+        # Update bottom OPC UA status (with dirty check)
         if hasattr(self, "lbl_opcua_status") and hasattr(self, "led_opcua"):
             ep = self.opcua_service.endpoint_url if self.opcua_service else OPCUA_ENDPOINT
-            is_cn = (self.current_lang == "CN")
 
             from urllib.parse import urlparse
             try:
@@ -608,22 +619,63 @@ class MainWindow(QMainWindow):
             except Exception:
                 ip_str = "127.0.0.1"
 
-            if self.plc.is_opcua_online:
-                self.led_opcua.set_color("green")
-                self.lbl_opcua_status.setText(f"{ip_str}: 在线" if is_cn else f"{ip_str}: Online")
-                self.lbl_opcua_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D;")
-                self.lbl_opcua_status.setToolTip(f"OPC UA 服务器: {ep} [在线]\n点击打开连接设置" if is_cn else f"OPC UA Server: {ep} [ONLINE]\nClick to configure")
-            else:
-                self.led_opcua.set_color("grey")
-                self.lbl_opcua_status.setText(f"{ip_str}: 离线" if is_cn else f"{ip_str}: Offline")
-                self.lbl_opcua_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #64748B;")
-                self.lbl_opcua_status.setToolTip(f"OPC UA 服务器: {ep} [离线]\n点击打开连接设置" if is_cn else f"OPC UA Server: {ep} [Disconnected]\nClick to configure")
+            opcua_key = (self.plc.is_opcua_online, ep, self.current_lang)
+            if opcua_key != getattr(self, "_last_opcua_state_key", None):
+                self._last_opcua_state_key = opcua_key
+                if self.plc.is_opcua_online:
+                    self.led_opcua.set_color("green")
+                    self.lbl_opcua_status.setText(f"{ip_str}: {tr('Online', self.current_lang)}")
+                    self.lbl_opcua_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D;")
+                    tip_online = tr("OPC UA Server: {ep} [ONLINE]\nClick to configure", self.current_lang).format(ep=ep)
+                    self.lbl_opcua_status.setToolTip(tip_online)
+                else:
+                    self.led_opcua.set_color("grey")
+                    self.lbl_opcua_status.setText(f"{ip_str}: {tr('Offline', self.current_lang)}")
+                    self.lbl_opcua_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #64748B;")
+                    tip_offline = tr("OPC UA Server: {ep} [Disconnected]\nClick to configure", self.current_lang).format(ep=ep)
+                    self.lbl_opcua_status.setToolTip(tip_offline)
+
+        # Auto-dismiss active alert dialog if PLC cleared msgbox_status (e.g. RemoteBox reconnected)
+        if getattr(self, "_active_msgbox_dlg", None) is not None:
+            if getattr(self.plc, "msgbox_status", 1) != 0:
+                self._active_msgbox_dlg.close()
+                self._active_msgbox_dlg = None
+
+        self._last_status_lang = self.current_lang
 
     def open_opcua_settings(self):
         """Open the interactive OPC UA settings dialog"""
         from ui.opcua_settings_dialog import OpcUaSettingsDialog
         dlg = OpcUaSettingsDialog(self.opcua_service, self.plc, self)
         dlg.exec()
+
+    def _on_plc_msgbox_triggered(self, msg_info):
+        """Displays popup when PLC triggers hmi.msgBox.status == 0"""
+        header = msg_info.get("header")
+        if not header:
+            header = tr("Remote Box Disconnected Warning", self.current_lang)
+
+        content = msg_info.get("content")
+        if not content:
+            content = tr(
+                "Remote box is not connected and blades are not safe. Please reconnect the remote box or abort the system.",
+                self.current_lang
+            )
+
+        btn_ok = msg_info.get("btn_ok_status", 1) == 0
+        btn_abort = True  # Always allow abort for site safety
+        abort_text = tr("Abort System", self.current_lang)
+
+        from utils.widgets import WarningModal
+        self._active_msgbox_dlg = WarningModal(
+            header, content, self,
+            opcua_service=self.opcua_service,
+            show_ok=btn_ok,
+            show_abort=btn_abort,
+            abort_text=abort_text
+        )
+        self._active_msgbox_dlg.exec()
+        self._active_msgbox_dlg = None
 
     def closeEvent(self, event):
         if self.opcua_service:
@@ -635,60 +687,63 @@ class MainWindow(QMainWindow):
         active_count = len(active_alarms)
         has_unacked = any(not a.is_acked for a in active_alarms)
         alarm_btn = self.nav_buttons[1]
-        res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
 
-        alarm_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #ECEFF2;
-                border: 1px solid #94A3B8;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #DFE4E8;
-            }
-            QPushButton:checked {
-                background-color: #FFFFFF;
-                border: 2px solid #C8102E;
-            }
-        """)
+        # 1. Dirty check: Only update icon and text color if unacknowledged alarm state changed
+        if has_unacked != self._last_has_unacked:
+            self._last_has_unacked = has_unacked
+            if hasattr(alarm_btn, 'lbl_icon') and hasattr(alarm_btn, 'lbl_text'):
+                if has_unacked:
+                    alarm_btn.lbl_text.setStyleSheet("background: transparent; font-family: 'Segoe UI', Arial; font-size: 11px; font-weight: bold; color: #DC2626;")
+                    if hasattr(self, '_pix_alarm_red') and not self._pix_alarm_red.isNull():
+                        alarm_btn.lbl_icon.setPixmap(self._pix_alarm_red)
+                else:
+                    alarm_btn.lbl_text.setStyleSheet("background: transparent; font-family: 'Segoe UI', Arial; font-size: 11px; font-weight: bold; color: #1F2937;")
+                    if hasattr(self, '_pix_alarm_gray') and not self._pix_alarm_gray.isNull():
+                        alarm_btn.lbl_icon.setPixmap(self._pix_alarm_gray)
 
-        if hasattr(alarm_btn, 'lbl_icon') and hasattr(alarm_btn, 'lbl_text'):
-            if has_unacked:
-                icon_file = "nav_alarm.png"
-                alarm_btn.lbl_text.setStyleSheet("background: transparent; font-family: 'Segoe UI', Arial; font-size: 11px; font-weight: bold; color: #DC2626;")
-            else:
-                icon_file = "nav_alarm_gray.png"
-                alarm_btn.lbl_text.setStyleSheet("background: transparent; font-family: 'Segoe UI', Arial; font-size: 11px; font-weight: bold; color: #1F2937;")
+        # 2. Dirty check: Dynamic alarm count bubble badge (only re-geometry if count changed)
+        if active_count != self._last_active_alarm_count:
+            self._last_active_alarm_count = active_count
+            if hasattr(self, 'alarm_badge') and self.alarm_badge is not None:
+                if active_count > 0:
+                    txt = str(active_count) if active_count <= 999 else "999+"
+                    self.alarm_badge.setText(txt)
 
-            pix = QPixmap(os.path.join(res_dir, icon_file))
-            if not pix.isNull():
-                alarm_btn.lbl_icon.setPixmap(pix.scaled(32, 32, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                    # Dynamically size badge (circle for 1 digit, pill for multi-digit)
+                    fm = self.alarm_badge.fontMetrics()
+                    text_w = fm.horizontalAdvance(txt)
+                    w = max(18, text_w + 8)
+                    h = 18
 
-        # Dynamic alarm count bubble badge
-        if hasattr(self, 'alarm_badge') and self.alarm_badge is not None:
-            if active_count > 0:
-                txt = str(active_count) if active_count <= 999 else "999+"
-                self.alarm_badge.setText(txt)
+                    # Align badge on the top-right corner of the 34x34 icon
+                    container_w = self.alarm_icon_container.width() if hasattr(self, 'alarm_icon_container') else 54
+                    x = min(container_w - w, max(10, 44 - w + 8))
+                    self.alarm_badge.setGeometry(x, 0, w, h)
+                    self.alarm_badge.show()
+                    self.alarm_badge.raise_()
+                else:
+                    self.alarm_badge.hide()
 
-                # Dynamically size badge (circle for 1 digit, pill for multi-digit)
-                fm = self.alarm_badge.fontMetrics()
-                text_w = fm.horizontalAdvance(txt)
-                w = max(18, text_w + 8)
-                h = 18
-
-                # Align badge on the top-right corner of the 34x34 icon
-                # In 54px container, icon spans x=10..44.
-                # Right edge at x=52 gives an anchor overlapping the top-right corner nicely
-                container_w = self.alarm_icon_container.width() if hasattr(self, 'alarm_icon_container') else 54
-                x = min(container_w - w, max(10, 44 - w + 8))
-                self.alarm_badge.setGeometry(x, 0, w, h)
-                self.alarm_badge.show()
-                self.alarm_badge.raise_()
-            else:
-                self.alarm_badge.hide()
+    def update_clock(self):
+        """Update clock and date display using PLC lower machine time if online, else placeholder."""
+        if self.plc.is_opcua_online and getattr(self.plc, "plc_time", None) is not None:
+            plc_dt = self.plc.plc_time
+            time_str = plc_dt.strftime("%H:%M:%S")
+            date_str = plc_dt.strftime("%m/%d/%Y")
+            if self.lbl_clock.text() != time_str:
+                self.lbl_clock.setText(time_str)
+                self.lbl_clock.setStyleSheet("font-size: 15px; font-weight: bold; color: #111827;")
+            if self.lbl_date.text() != date_str:
+                self.lbl_date.setText(date_str)
+                self.lbl_date.setStyleSheet("font-size: 12px; color: #374151; margin-top: 2px;")
+        else:
+            if self.lbl_clock.text() != "--:--:--":
+                self.lbl_clock.setText("--:--:--")
+                self.lbl_clock.setStyleSheet("font-size: 15px; font-weight: bold; color: #9CA3AF;")
+            if self.lbl_date.text() != "--/--/----":
+                self.lbl_date.setText("--/--/----")
+                self.lbl_date.setStyleSheet("font-size: 12px; color: #9CA3AF; margin-top: 2px;")
 
     def on_timer_tick(self):
-        # Update clock
-        now = datetime.now()
-        self.lbl_clock.setText(now.strftime("%H:%M:%S"))
-        self.lbl_date.setText(now.strftime("%m/%d/%Y"))
+        self.update_clock()
+

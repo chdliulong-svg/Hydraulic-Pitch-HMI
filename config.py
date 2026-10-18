@@ -17,6 +17,7 @@ WINDOW_MIN_HEIGHT = 680
 HMI_VERSION = "1.0"
 UI_REFRESH_TIMER_MS = 100       # UI clock and state refresh timer in milliseconds
 TEST_AUTORUN_TIMEOUT_MS = 500   # Automated self-test quit delay in milliseconds
+import hashlib
 
 # =============================================================================
 # 2. User Roles & Authentication Passwords
@@ -25,9 +26,25 @@ ROLE_NOT_LOGGED_IN = "Not logged in!"
 ROLE_MAINTENANCE = "Maintenance"
 ROLE_SUPER_USER = "Super User"
 
-PASSWORD_MANUAL_CALIB = "asdf"
-PASSWORD_MAINT_LOGIN = "asdf"
-PASSWORD_SUPER_USER = "super"
+# Password Hashing & Salt Configuration
+AUTH_SALT = os.environ.get("HMI_AUTH_SALT", "HMI_SEC_PAC_SALT_2026")
+
+def hash_password(password: str, salt: str = AUTH_SALT) -> str:
+    """Computes SHA-256 salted hash for user authentication"""
+    return hashlib.sha256((str(password) + salt).encode("utf-8")).hexdigest()
+
+# Raw credentials (prioritizes environment variables, fallback to defaults)
+_ENV_SUPER_RAW = os.environ.get("HMI_SUPER_PASSWORD", "super")
+_ENV_MAINT_RAW = os.environ.get("HMI_MAINT_PASSWORD", "asdf")
+
+# Precomputed / Environment-provided SHA-256 password hashes
+HASH_SUPER_USER = os.environ.get("HMI_SUPER_HASH", hash_password(_ENV_SUPER_RAW))
+HASH_MAINTENANCE = os.environ.get("HMI_MAINT_HASH", hash_password(_ENV_MAINT_RAW))
+
+# Backward compatibility constants
+PASSWORD_SUPER_USER = _ENV_SUPER_RAW
+PASSWORD_MAINT_LOGIN = _ENV_MAINT_RAW
+PASSWORD_MANUAL_CALIB = _ENV_MAINT_RAW
 
 # =============================================================================
 # 3. OPC UA Communication & CODESYS Architecture

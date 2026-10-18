@@ -20,6 +20,7 @@ class InspectPage(QWidget):
         self.current_lang = "EN"
         self.init_ui()
         self.plc.state_changed.connect(self.update_values)
+        self.update_values()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -43,13 +44,13 @@ class InspectPage(QWidget):
 
         # 1. PAC Status Card (using TelemetryCard framework)
         self.pac_card = TelemetryCard("PAC Status")
-        self.pac_card.add_value_row("t_hub", "Temperature Hub", unit="°C", default_val="29.8")
-        self.pac_card.add_value_row("t_cab", "Temperature cabinet", unit="°C", default_val="32.2")
-        self.pac_card.add_value_row("t_oil", "Temperature oil", unit="°C", default_val="29.8")
-        self.pac_card.add_value_row("cur_t1", "Supply Current T1 PAC", unit="A", default_val="-10.01")
-        self.pac_card.add_value_row("cur_t2", "Supply Current T2 PAC", unit="A", default_val="-10.00")
-        self.pac_card.add_value_row("cpu_temp", "PAC CPU temp.", unit="°C", default_val="64.0")
-        self.pac_card.add_led_row("pwr_ok", "Power supply OK", color="green", shape="square", size=14)
+        self.pac_card.add_value_row("t_hub", "Temperature Hub", unit="°C", default_val="0.0")
+        self.pac_card.add_value_row("t_cab", "Temperature cabinet", unit="°C", default_val="0.0")
+        self.pac_card.add_value_row("t_oil", "Temperature oil", unit="°C", default_val="0.0")
+        self.pac_card.add_value_row("cur_t1", "Supply Current T1 PAC", unit="A", default_val="0.00")
+        self.pac_card.add_value_row("cur_t2", "Supply Current T2 PAC", unit="A", default_val="0.00")
+        self.pac_card.add_value_row("cpu_temp", "PAC CPU temp.", unit="°C", default_val="0.0")
+        self.pac_card.add_led_row("pwr_ok", "Power supply OK", color="grey", shape="square", size=14)
         bottom_layout.addWidget(self.pac_card, 1)
 
         # 2. Lubrication Status Card (using unified LubricationTelemetryCard framework)
@@ -60,7 +61,7 @@ class InspectPage(QWidget):
         self.hpu_card = TelemetryCard("HPU Status (From MC)")
         self.hpu_card.add_status_row("state", "HPU State", default_status="Stopped")
         self.hpu_card.add_value_row("t_oil", "Temperature oil", unit="°C", default_val="0.0")
-        self.hpu_card.add_value_row("p_accu", "Pressure accu", unit="bar", default_val="191.3")
+        self.hpu_card.add_value_row("p_accu", "Pressure accu", unit="bar", default_val="0.0")
         self.hpu_card.add_value_row("oil_lvl", "Oil level", unit="l", default_val="0")
         bottom_layout.addWidget(self.hpu_card, 1)
 

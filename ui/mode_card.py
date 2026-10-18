@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QFrame
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from utils.i18n import tr
 
 
 class PillBadge(QLabel):
@@ -164,30 +165,28 @@ class ModeCard(QGroupBox):
         self.current_badge_text = badge_text
         self.current_badge_type = badge_type
 
-        is_cn = (self.current_lang == "CN")
-
         # 1. Update Title
         if self.mode_type == "manual":
-            self.setTitle("手动模式管理" if is_cn else "Manual Mode")
+            self.setTitle(tr("Manual Mode Control", self.current_lang))
         else:
-            self.setTitle("维护模式管理" if is_cn else "Maintenance Mode")
+            self.setTitle(tr("Maintenance Mode Control", self.current_lang))
 
         # 2. Update Status Hint
-        self.lbl_status_hint.setText("准入状态:" if is_cn else "Access Status:")
+        self.lbl_status_hint.setText(tr("Access Status:", self.current_lang))
 
         # 3. Update Badge
         if badge_text:
             self.badge_status.set_state(badge_type, badge_text)
         else:
             if is_active:
-                self.badge_status.set_state("ready", "✔ 运行中" if is_cn else "✔ Active")
+                self.badge_status.set_state("ready", tr("✔ Active", self.current_lang))
             elif can_enter:
-                self.badge_status.set_state("unlocked", "✔ 具备准入条件" if is_cn else "✔ Ready to Enter")
+                self.badge_status.set_state("unlocked", tr("✔ Ready to Enter", self.current_lang))
             else:
                 if self.mode_type == "manual":
-                    self.badge_status.set_state("locked", "🔒 需处于已停止" if is_cn else "🔒 Require Stopped")
+                    self.badge_status.set_state("locked", tr("🔒 Require Stopped", self.current_lang))
                 else:
-                    self.badge_status.set_state("locked", "🔒 需处于已中止" if is_cn else "🔒 Need Aborted")
+                    self.badge_status.set_state("locked", tr("🔒 Need Aborted", self.current_lang))
 
         # 4. Update Prompt Text
         self.lbl_prompt.setText(prompt_text)
@@ -196,9 +195,9 @@ class ModeCard(QGroupBox):
         if is_active:
             # Mode active -> Exit button
             if self.mode_type == "manual":
-                self.btn_action.setText("退出手动模式 ✖" if is_cn else "Exit Manual Mode ✖")
+                self.btn_action.setText(tr("Exit Manual Mode ✖", self.current_lang))
             else:
-                self.btn_action.setText("退出维护模式 ✖" if is_cn else "Exit Maint. Mode ✖")
+                self.btn_action.setText(tr("Exit Maint. Mode ✖", self.current_lang))
 
             self.btn_action.setEnabled(can_exit)
             if can_exit:
@@ -219,9 +218,9 @@ class ModeCard(QGroupBox):
         else:
             # Mode inactive -> Request button
             if self.mode_type == "manual":
-                self.btn_action.setText("请求手动模式 ⚙" if is_cn else "Request Manual Mode ⚙")
+                self.btn_action.setText(tr("Request Manual Mode ⚙", self.current_lang))
             else:
-                self.btn_action.setText("请求进入维护模式 ⚙" if is_cn else "Request Maint. Mode ⚙")
+                self.btn_action.setText(tr("Request Maint. Mode ⚙", self.current_lang))
 
             self.btn_action.setEnabled(can_enter)
             if can_enter:

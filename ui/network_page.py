@@ -6,6 +6,10 @@ Provides PLC Ethernet configuration (Hostname, IP, Subnet Mask)
 and User Authentication using unified LoginCard.
 """
 
+import ipaddress
+import re
+
+HOSTNAME_REGEX = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
     QLabel, QPushButton, QLineEdit, QMessageBox
@@ -13,7 +17,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from config import (
     DEFAULT_PLC_HOSTNAME, DEFAULT_PLC_IP, DEFAULT_PLC_SUBNET,
-    PASSWORD_SUPER_USER, PASSWORD_MAINT_LOGIN,
     ROLE_NOT_LOGGED_IN, ROLE_MAINTENANCE, ROLE_SUPER_USER
 )
 from utils.i18n import tr
@@ -47,6 +50,9 @@ class NetworkPage(QWidget):
 
         # Real-time automatic synchronization from PLC state
         self.plc.state_changed.connect(self.auto_sync_from_plc)
+        self.plc.auth_changed.connect(self._on_auth_changed)
+        if getattr(self.plc, "current_role", ROLE_NOT_LOGGED_IN) != ROLE_NOT_LOGGED_IN:
+            self._on_auth_changed(self.plc.current_role)
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -263,8 +269,7 @@ class NetworkPage(QWidget):
         main_layout.addLayout(content_layout)
 
     def _create_sys_reset_group(self):
-        is_cn = (self.current_lang == "CN")
-        grp = QGroupBox("PLC 控制器操作" if is_cn else "PLC Controller Action")
+        grp = QGroupBox("PLC Controller Action")
         grp.setFixedWidth(260)
         grp.setStyleSheet("""
             QGroupBox {
@@ -291,15 +296,12 @@ class NetworkPage(QWidget):
         layout.setContentsMargins(14, 10, 14, 12)
         layout.setSpacing(8)
 
-        self.lbl_sys_reset_hint = QLabel(
-            "修改网络参数后需软重启 PLC 生效。需登录维护权限。" if is_cn
-            else "PLC soft restart required for IP changes. Maintenance login required."
-        )
+        self.lbl_sys_reset_hint = QLabel("PLC soft restart required for IP changes. Maintenance login required.")
         self.lbl_sys_reset_hint.setWordWrap(True)
         self.lbl_sys_reset_hint.setStyleSheet("font-size: 10px; color: #64748B;")
         layout.addWidget(self.lbl_sys_reset_hint)
 
-        self.btn_plc_restart = QPushButton("🔄 PLC 软重启" if is_cn else "🔄 PLC Soft Restart")
+        self.btn_plc_restart = QPushButton("🔄 PLC Soft Restart")
         self.btn_plc_restart.setFixedHeight(32)
         self.btn_plc_restart.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_plc_restart.setStyleSheet("""
@@ -327,18 +329,19 @@ class NetworkPage(QWidget):
         return grp
 
     def _handle_network_login(self, pwd):
-        if pwd in [PASSWORD_SUPER_USER, "super"]:
-            self.current_user_role = ROLE_SUPER_USER
-            self.plc.is_super_user = True
+        ok, msg, role = self.plc.authenticate(pwd)
+        if ok:
             return True, ""
-        elif pwd in [PASSWORD_MAINT_LOGIN, "asdf"]:
-            self.current_user_role = ROLE_MAINTENANCE
-            return True, ""
-        return False, tr("Invalid password!", self.current_lang)
+        return False, tr("Incorrect password!", self.current_lang)
 
     def _handle_network_logout(self):
-        self.current_user_role = ROLE_NOT_LOGGED_IN
-        self.plc.is_super_user = False
+        self.plc.logout()
+
+    def _on_auth_changed(self, role):
+        self.current_user_role = role
+        is_logged = (role != ROLE_NOT_LOGGED_IN)
+        self.login_card.set_state(is_logged, role if is_logged else None)
+        self.update_ui_state()
 
     def handle_login_logout(self):
         self.login_card.handle_login_logout()
@@ -361,14 +364,12 @@ class NetworkPage(QWidget):
         role_display = tr(role, self.current_lang) if is_logged else None
         self.login_card.set_state(is_logged, role_name=role_display)
 
-        is_cn = (self.current_lang == "CN")
         node_missing = (self.plc.is_opcua_online and not getattr(self.plc, "has_network_nodes", False))
 
         if is_auth:
             if node_missing:
                 self.lbl_net_status.setText(
-                    "⚠️ 权限正常，但 PLC 符号配置未发布网络变量 (BadNodeIdUnknown)，修改仅在本地生效。" if is_cn
-                    else "⚠️ Authorized, but PLC Symbol Configuration does not export network variables (BadNodeIdUnknown)."
+                    tr("⚠️ Authorized, but PLC Symbol Configuration does not export network variables (BadNodeIdUnknown).", self.current_lang)
                 )
                 self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #D97706; margin-top: 4px;")
             elif is_super:
@@ -380,8 +381,7 @@ class NetworkPage(QWidget):
         else:
             if node_missing:
                 self.lbl_net_status.setText(
-                    "状态: 需维护登录。⚠️ PLC 符号配置未发布 Common.PVturbineSpecific.network" if is_cn
-                    else "Status: Maintenance login required. ⚠️ PLC symbol not exported."
+                    tr("Status: Maintenance login required. ⚠️ PLC symbol not exported.", self.current_lang)
                 )
                 self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #DC2626; margin-top: 4px;")
             else:
@@ -456,6 +456,31 @@ class NetworkPage(QWidget):
         ip = self.edit_new_ip.text().strip() or cur_ip
         mask = self.edit_new_mask.text().strip() or cur_mask
 
+        # Validate Hostname
+        if not HOSTNAME_REGEX.match(host):
+            title = tr("Format Error", self.current_lang)
+            msg = tr("Invalid Hostname: '{host}'!\nOnly alphanumeric characters, underscores, and hyphens allowed (1-32 chars).", self.current_lang).format(host=host)
+            QMessageBox.warning(self, title, msg)
+            return
+
+        # Validate IP address
+        try:
+            ipaddress.IPv4Address(ip)
+        except ValueError:
+            title = tr("Format Error", self.current_lang)
+            msg = tr("Invalid IPv4 address: '{ip}'!", self.current_lang).format(ip=ip)
+            QMessageBox.warning(self, title, msg)
+            return
+
+        # Validate Subnet Mask
+        try:
+            ipaddress.IPv4Network(f"0.0.0.0/{mask}")
+        except ValueError:
+            title = tr("Format Error", self.current_lang)
+            msg = tr("Invalid subnet mask: '{mask}'!", self.current_lang).format(mask=mask)
+            QMessageBox.warning(self, title, msg)
+            return
+
         self.edit_new_host.setText(host)
         self.edit_new_ip.setText(ip)
         self.edit_new_mask.setText(mask)
@@ -464,9 +489,34 @@ class NetworkPage(QWidget):
             QMessageBox.warning(self, tr("Permission Denied", self.current_lang), tr("Network settings update requires Maintenance login!", self.current_lang))
             return
 
+        # 1. Require PLC to be online
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            warn_msg = tr("⚠️ PLC communication is offline. Cannot send network settings to controller!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, warn_msg)
+            return
+
         self._user_edited_host = False
         self._user_edited_ip = False
         self._user_edited_mask = False
+
+        # 2. Check whether CODESYS exports the symbol
+        if not getattr(self.plc, "has_network_nodes", False):
+            title = tr("PLC Symbol Missing Warning", self.current_lang)
+            warn_msg = tr(
+                "⚠️ Write Failed (Error: BadNodeIdUnknown)\n\n"
+                "The node 'Common.PVturbineSpecific.network' is not published in CODESYS Symbol Configuration.\n\n"
+                "• PLC hardware: NOT written (symbol not exported)\n\n"
+                "💡 Solution: In CODESYS Symbol Configuration, check 'Common.PVturbineSpecific' and perform Online Change.",
+                self.current_lang
+            )
+            QMessageBox.warning(self, title, warn_msg)
+            self.lbl_net_status.setText("⚠️ " + tr("PLC symbol missing, cannot apply", self.current_lang))
+            self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #D97706; margin-top: 4px;")
+            return
+
+        # 3. Transmit to PLC
+        self.opcua_service.write_network_settings(host, ip, mask)
         if hasattr(self.plc, "net_hostname"):
             self.plc.net_hostname = host
             self.plc.net_ip = ip
@@ -482,59 +532,21 @@ class NetworkPage(QWidget):
         self.edit_new_ip.setStyleSheet(self._edit_style)
         self.edit_new_mask.setStyleSheet(self._edit_style)
 
-        is_cn = (self.current_lang == "CN")
-
-        # Check whether OPC UA is online and whether network node is available
-        if self.opcua_service and self.plc.is_opcua_online:
-            if not getattr(self.plc, "has_network_nodes", False):
-                title = "PLC 节点未导出警告" if is_cn else "PLC Symbol Missing Warning"
-                warn_msg = (
-                    "⚠️ 写入失败 (错误: BadNodeIdUnknown)\n\n"
-                    "当前 CODESYS PLC 的【符号配置】(Symbol Configuration) 中未导出 'Common.PVturbineSpecific.network'，OPC UA 无法寻址该节点。\n\n"
-                    "• 上位机本地缓存：已更新为新参数\n"
-                    "• PLC 控制器硬件：未能写入（变量未发布）\n\n"
-                    "💡 解决建议：请在 CODESYS 项目的【Symbol Configuration】中勾选 'Common.PVturbineSpecific' 变量，并执行在线变更 (Online Change)。"
-                    if is_cn else
-                    "⚠️ Write Failed (Error: BadNodeIdUnknown)\n\n"
-                    "The node 'Common.PVturbineSpecific.network' is not published in CODESYS Symbol Configuration.\n\n"
-                    "• Local HMI memory: Updated\n"
-                    "• PLC hardware: NOT written (symbol not exported)\n\n"
-                    "💡 Solution: In CODESYS Symbol Configuration, check 'Common.PVturbineSpecific' and perform Online Change."
-                )
-                QMessageBox.warning(self, title, warn_msg)
-                self.lbl_net_status.setText("⚠️ " + ("PLC 节点未发布，参数仅在本地更新" if is_cn else "PLC symbol missing, updated locally only"))
-                self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #D97706; margin-top: 4px;")
-            else:
-                self.opcua_service.write_network_settings(host, ip, mask)
-                title = "网络设置" if is_cn else "Network Settings"
-                info_msg = (
-                    "✔ 网络参数已成功下发至 PLC！\n\n请在下方点击【🔄 PLC 软重启】使新网络配置生效。"
-                    if is_cn else
-                    "✔ Network parameters sent to PLC successfully!\n\nPlease perform PLC Soft Restart below to apply changes."
-                )
-                QMessageBox.information(self, title, info_msg)
-                self.lbl_net_status.setText("✔ " + ("参数已下发至 PLC，重启控制器生效" if is_cn else "Sent to PLC. Restart controller to apply"))
-                self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D; margin-top: 4px;")
-        else:
-            title = "通信断开" if is_cn else "Communication Offline"
-            warn_msg = (
-                "⚠️ 当前 PLC 通信已断开，网络参数已在本地保存，但未能下发至控制器！\n\n待建立 OPC UA 通信后方可下发至 PLC。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Network settings saved locally, but NOT sent to controller!\n\nPlease check OPC UA connection."
-            )
-            QMessageBox.warning(self, title, warn_msg)
-            self.lbl_net_status.setText("⚠️ " + ("当前离线，参数仅在本地更新" if is_cn else "Offline, updated locally only"))
-            self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #DC2626; margin-top: 4px;")
+        title = tr("Network Settings", self.current_lang)
+        info_msg = tr(
+            "✔ Network parameters sent to PLC successfully!\n\nPlease perform PLC Soft Restart below to apply changes.",
+            self.current_lang
+        )
+        QMessageBox.information(self, title, info_msg)
+        self.lbl_net_status.setText("✔ " + tr("Sent to PLC. Restart controller to apply", self.current_lang))
+        self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D; margin-top: 4px;")
 
     def handle_plc_soft_restart(self):
-        is_cn = (self.current_lang == "CN")
-        title = "PLC 软重启确认" if is_cn else "PLC Soft Restart Confirmation"
-        prompt = (
-            "⚠️ 警告：确定要向 PLC 发送软重启指令 (sysReset) 吗？\n\n"
-            "此操作将使 CODESYS PLC 控制器重启并应用新的网络设置，请确保现场设备安全并且人员不在轮毂内！"
-            if is_cn else
+        title = tr("PLC Soft Restart Confirmation", self.current_lang)
+        prompt = tr(
             "⚠️ WARNING: Are you sure you want to send Soft Restart (sysReset) to the PLC?\n\n"
-            "This will restart the PLC controller to apply settings. Please verify site safety and ensure no personnel in the hub!"
+            "This will restart the PLC controller to apply settings. Please verify site safety and ensure no personnel in the hub!",
+            self.current_lang
         )
         reply = QMessageBox.question(
             self,
@@ -546,19 +558,11 @@ class NetworkPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             if self.opcua_service and self.plc.is_opcua_online:
                 self.opcua_service.send_plc_sys_reset()
-                self.opcua_service.send_msgbox_ok()
-                success_msg = "PLC 软重启指令已成功下发至控制器！" if is_cn else "PLC soft restart command sent successfully!"
+                success_msg = tr("PLC soft restart command sent successfully!", self.current_lang)
                 QMessageBox.information(self, title, success_msg)
             else:
-                warn_msg = (
-                    "⚠️ 当前 PLC 通信已断开，无法下发软重启指令！\n请检查底层 OPC UA 通信连接。"
-                    if is_cn else
-                    "⚠️ PLC communication is offline. Cannot send soft restart command!\nPlease check OPC UA connection."
-                )
+                warn_msg = tr("⚠️ PLC communication is offline. Cannot send soft restart command!\nPlease check OPC UA connection.", self.current_lang)
                 QMessageBox.warning(self, title, warn_msg)
-        else:
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.send_msgbox_abort()
 
     def retranslate_ui(self, lang="EN"):
         self.current_lang = lang

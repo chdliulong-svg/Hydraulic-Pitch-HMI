@@ -4,6 +4,7 @@ PAC State and Telemetry Model for SEC PAC 6MW Hydraulic Pitch HMI
 Holds PackML states, blade parameters, and OPC UA telemetry
 """
 
+import time
 from PyQt6.QtCore import QObject, pyqtSignal
 from config import (
     STATE_ABORTED, STATE_CLEARING, STATE_STOPPED, STATE_RESETTING,
@@ -13,7 +14,9 @@ from config import (
     GRD_MIN_VALUE, GRD_MAX_VALUE,
     OFFSET_MIN_DEG, OFFSET_MAX_DEG,
     DEFAULT_PLC_HOSTNAME, DEFAULT_PLC_IP, DEFAULT_PLC_SUBNET,
-    ROLE_NOT_LOGGED_IN
+    ROLE_NOT_LOGGED_IN, ROLE_MAINTENANCE, ROLE_SUPER_USER,
+    PASSWORD_SUPER_USER, PASSWORD_MAINT_LOGIN, PASSWORD_MANUAL_CALIB,
+    HASH_SUPER_USER, HASH_MAINTENANCE, hash_password
 )
 from models.opcua_service import MAINTENANCE_VALVES
 
@@ -52,6 +55,8 @@ class BladeData:
 class PLCStateManager(QObject):
     state_changed = pyqtSignal()
     message_updated = pyqtSignal(str)
+    auth_changed = pyqtSignal(str)
+    msgbox_triggered = pyqtSignal(dict)
 
     def __init__(self):
         super().__init__()
@@ -62,7 +67,7 @@ class PLCStateManager(QObject):
         # Control Source
         self.remote_box_connected = False
         self.manual_control_source = "HMI"  # "HMI" or "Remote Box"
-        self.safety_ok = True
+        self.safety_ok = False
         
         # Selected blade for manual operation (0=A, 1=B, 2=C)
         self.selected_blade_idx = 0
@@ -71,18 +76,19 @@ class PLCStateManager(QObject):
         self.manual_fast_speed = MANUAL_FAST_SPEED_DEFAULT  # °/s (0.1 ~ 2.5)
         self.manual_slow_speed = MANUAL_SLOW_SPEED_DEFAULT  # °/s
         self.manual_speed_mode = "FAST" # "FAST" or "SLOW"
+        self.manual_pitch_lock_disengaged = False  # False = Engaged (已落锁), True = Released (已释放)
         self.manual_moving_dir = 0    # 1=Feather, -1=Fine, 0=Stop
-        self.blade_safe = [True] * BLADE_COUNT
+        self.blade_safe = [False] * BLADE_COUNT
         self.manual_current_pos = None
 
         # Lubrication
         self.pump1_active = False
         self.pump2_active = False
-        self.lub_tank1_ok = True
+        self.lub_tank1_ok = False
         self.lub_piston_a1 = False
         self.lub_piston_b1 = False
         self.lub_piston_c1 = False
-        self.lub_tank2_ok = True
+        self.lub_tank2_ok = False
         self.lub_piston_a2 = False
         self.lub_piston_b2 = False
         self.lub_piston_c2 = False
@@ -125,14 +131,11 @@ class PLCStateManager(QObject):
         self.maint_prop_pending = [0.0] * BLADE_COUNT
 
         # Login state
+        self.current_role = ROLE_NOT_LOGGED_IN
         self.manual_logged_in = False
         self.maint_logged_in = False
         self.file_logged_level = ROLE_NOT_LOGGED_IN
         self.is_super_user = False
-
-        # HMI Color Control feedback from PLC
-        self.hmi_color_apply_app = False
-        self.hmi_color_apply_grd = False
 
         # Status text
         self.bottom_status_msg = 'PAC: "Aborted - Waiting for Clear Command"'
@@ -143,6 +146,9 @@ class PLCStateManager(QObject):
         self.msgbox_content = ""
         self.msgbox_btn_ok = 0
         self.msgbox_btn_abort = 0
+        self.msgbox_btn_ok_status = 0
+        self.msgbox_btn_abort_status = 0
+        self.msgbox_icon = 0
 
         # PLC Main Start/Abort button visibility from Common.hmi.status (0=Show, 1=Hide)
         self.plc_abort_btn_status = 0
@@ -151,13 +157,31 @@ class PLCStateManager(QObject):
         # OPC UA live connection state
         self.is_opcua_online = False
         self.opcua_status_msg = "OPC UA: Disconnected"
+        self.plc_time = None
 
     def set_opcua_status(self, connected: bool, msg: str):
         self.is_opcua_online = connected
         self.opcua_status_msg = msg
         if not connected:
+            self.plc_time = None
             self.pac_version_hw = "---"
             self.pac_version_sw = "---"
+            self.safety_ok = False
+            self.blade_safe = [False] * BLADE_COUNT
+            self.pump1_active = False
+            self.pump2_active = False
+            self.lub_tank1_ok = False
+            self.lub_tank2_ok = False
+            self.lub_piston_a1 = False
+            self.lub_piston_b1 = False
+            self.lub_piston_c1 = False
+            self.lub_piston_a2 = False
+            self.lub_piston_b2 = False
+            self.lub_piston_c2 = False
+            self.power_supply_ok = False
+            for bld in self.blades:
+                bld.pitch_reference_active = False
+                bld.pitch_lock_engaged = False
         self.state_changed.emit()
 
     def update_from_opcua(self, data: dict):
@@ -198,24 +222,21 @@ class PLCStateManager(QObject):
             self.bottom_status_msg = f'PAC: "{desc}"'
             self.message_updated.emit(self.bottom_status_msg)
 
-        # Check whether PLC has actual hardware limit switches active
-        has_hw_lock_feedback = any(
-            data.get(f"blade_{j}", {}).get("pitch_lock_engaged", False) for j in range(len(self.blades))
-        )
-
-        # Update 3 blades
+        # Update 3 blades (all telemetry directly from lower machine PLC without host calculations)
         for i, bld in enumerate(self.blades):
             b_data = data.get(f"blade_{i}")
             if b_data:
-                bld.pressure_accu = b_data.get("pres_accu", bld.pressure_accu)
-                bld.pressure_piston = b_data.get("pres_piston", bld.pressure_piston)
-                bld.pressure_rod = b_data.get("pres_rod", bld.pressure_rod)
-                bld.cyl_pos_mm = b_data.get("cyl_pos", bld.cyl_pos_mm)
-                bld.angle_deg = b_data.get("pos_act_deg", bld.angle_deg)
-                bld.speed_degs = b_data.get("rate_act_deg", bld.speed_degs)
-                bld.spool_pos_pct = b_data.get("spool_pos_fb", bld.spool_pos_pct)
-                if has_hw_lock_feedback:
-                    bld.pitch_lock_engaged = b_data.get("pitch_lock_engaged", bld.pitch_lock_engaged)
+                bld.pressure_accu = float(b_data.get("pres_accu", bld.pressure_accu))
+                bld.pressure_piston = float(b_data.get("pres_piston", bld.pressure_piston))
+                bld.pressure_rod = float(b_data.get("pres_rod", bld.pressure_rod))
+                bld.cyl_pos_mm = float(b_data.get("cyl_pos", bld.cyl_pos_mm))
+                bld.cyl_speed_mms = float(b_data.get("cyl_spd", bld.cyl_speed_mms))
+                bld.angle_deg = float(b_data.get("pos_act_deg", bld.angle_deg))
+                bld.speed_degs = float(b_data.get("rate_act_deg", bld.speed_degs))
+                bld.spool_pos_pct = float(b_data.get("spool_pos_fb", bld.spool_pos_pct))
+                if "pitch_lock_engaged" in b_data:
+                    bld.pitch_lock_engaged = bool(b_data["pitch_lock_engaged"])
+                bld.pitch_reference_active = bool(b_data.get("pitch_ref_active", bld.pitch_reference_active))
 
         # PAC Version from OPC UA
         if "pac_version_hw" in data and data["pac_version_hw"] is not None:
@@ -285,11 +306,6 @@ class PLCStateManager(QObject):
                 except (ValueError, TypeError):
                     pass
 
-        if "color_apply_app" in data and data["color_apply_app"] is not None:
-            self.hmi_color_apply_app = bool(data["color_apply_app"])
-        if "color_apply_grd" in data and data["color_apply_grd"] is not None:
-            self.hmi_color_apply_grd = bool(data["color_apply_grd"])
-
         # Common.PVturbineSpecific: Network parameters
         if "has_network_nodes" in data:
             self.has_network_nodes = bool(data["has_network_nodes"])
@@ -308,6 +324,7 @@ class PLCStateManager(QObject):
         if "current_t1" in data: self.current_t1 = data["current_t1"]
         if "current_t2" in data: self.current_t2 = data["current_t2"]
         if "power_supply_ok" in data: self.power_supply_ok = data["power_supply_ok"]
+        if "safety_ok" in data and data["safety_ok"] is not None: self.safety_ok = bool(data["safety_ok"])
 
         # Lubrication
         if "lub_tank1_ok" in data: self.lub_tank1_ok = data["lub_tank1_ok"]
@@ -351,17 +368,7 @@ class PLCStateManager(QObject):
             self.manual_speed_mode = "FAST" if bool(data["hmi_fast_chosen"]) else "SLOW"
 
         if "hmi_pitch_lock" in data and data["hmi_pitch_lock"] is not None:
-            # hmi_pitch_lock is True when lock is disengaged
-            disengaged = bool(data["hmi_pitch_lock"])
-            if not has_hw_lock_feedback:
-                for i, bld in enumerate(self.blades):
-                    if i == self.selected_blade_idx:
-                        bld.pitch_lock_engaged = not disengaged
-                    else:
-                        bld.pitch_lock_engaged = True
-            else:
-                if 0 <= self.selected_blade_idx < len(self.blades):
-                    self.blades[self.selected_blade_idx].pitch_lock_engaged = not disengaged
+            self.manual_pitch_lock_disengaged = bool(data["hmi_pitch_lock"])
 
         # Lubrication pump feedback from pac.io.dOut
         if "pac_lub1_pump_on" in data and data["pac_lub1_pump_on"] is not None:
@@ -370,16 +377,32 @@ class PLCStateManager(QObject):
             self.pump2_active = bool(data["pac_lub2_pump_on"])
 
         # HMI Message Box telemetry
-        if "msgbox_status" in data:
+        prev_msgbox_status = self.msgbox_status
+        if "msgbox_status" in data and data["msgbox_status"] is not None:
             self.msgbox_status = int(data["msgbox_status"])
-        if "msgbox_header" in data:
+        if "msgbox_header" in data and data["msgbox_header"] is not None:
             self.msgbox_header = str(data["msgbox_header"])
-        if "msgbox_content" in data:
+        if "msgbox_content" in data and data["msgbox_content"] is not None:
             self.msgbox_content = str(data["msgbox_content"])
-        if "msgbox_btn_ok" in data:
-            self.msgbox_btn_ok = int(data["msgbox_btn_ok"])
-        if "msgbox_btn_abort" in data:
-            self.msgbox_btn_abort = int(data["msgbox_btn_abort"])
+        if "msgbox_btn_ok_status" in data and data["msgbox_btn_ok_status"] is not None:
+            self.msgbox_btn_ok_status = int(data["msgbox_btn_ok_status"])
+        elif "msgbox_btn_ok" in data and data["msgbox_btn_ok"] is not None:
+            self.msgbox_btn_ok_status = int(data["msgbox_btn_ok"])
+        if "msgbox_btn_abort_status" in data and data["msgbox_btn_abort_status"] is not None:
+            self.msgbox_btn_abort_status = int(data["msgbox_btn_abort_status"])
+        elif "msgbox_btn_abort" in data and data["msgbox_btn_abort"] is not None:
+            self.msgbox_btn_abort_status = int(data["msgbox_btn_abort"])
+        if "msgbox_icon" in data and data["msgbox_icon"] is not None:
+            self.msgbox_icon = int(data["msgbox_icon"])
+
+        if prev_msgbox_status != 0 and self.msgbox_status == 0:
+            self.msgbox_triggered.emit({
+                "header": self.msgbox_header,
+                "content": self.msgbox_content,
+                "icon": self.msgbox_icon,
+                "btn_ok_status": self.msgbox_btn_ok_status,
+                "btn_abort_status": self.msgbox_btn_abort_status
+            })
 
         # PLC Main Start/Abort button visibility (0=Show, 1=Hide)
         if "plc_abort_btn_status" in data:
@@ -387,85 +410,87 @@ class PLCStateManager(QObject):
         if "plc_start_btn_status" in data:
             self.plc_start_btn_status = int(data["plc_start_btn_status"])
 
+        # PLC Server Real-Time Clock
+        if "plc_time" in data and data["plc_time"] is not None:
+            self.plc_time = data["plc_time"]
+
         self.state_changed.emit()
 
-    # --- PackML State Transitions ---
+    # --- PackML State Transitions (Strictly PLC-Driven) ---
     def start_pressed(self):
-        """START button handler (PAC Clear / Start)"""
-        if self.blade_state == STATE_ABORTED:
-            self.blade_state = STATE_CLEARING
-            self.bottom_status_msg = 'PAC: "Clearing - Checking Accumulator & Valves"'
-            self.state_changed.emit()
-        elif self.blade_state == STATE_STOPPED:
-            self.blade_state = STATE_RESETTING
-            self.bottom_status_msg = 'PAC: "Resetting - Unlocking blades to standby"'
-            self.state_changed.emit()
+        """Deprecated: PackML state transitions are strictly driven by PLC telemetry via OPC UA."""
+        pass
 
     def stop_pressed(self):
-        """STOP button handler (PAC Abort / Stop)"""
-        if self.blade_state != STATE_ABORTED and self.blade_state != STATE_ABORTING:
-            self.blade_state = STATE_ABORTING
-            self.bottom_status_msg = 'PAC: "Aborting - Stopping blades to feather"'
-            self.state_changed.emit()
-        elif self.blade_mode == MODE_MAINTENANCE:
-            self.exit_maintenance_mode()
+        """Deprecated: PackML state transitions are strictly driven by PLC telemetry via OPC UA."""
+        pass
 
     def request_manual_mode(self):
-        """Enter manual mode condition check"""
-        if not getattr(self, "is_super_user", False) and self.blade_state != STATE_STOPPED:
-            return False, "PAC must be in STOPPED state to enter Manual Mode."
-        self.blade_mode = MODE_MANUAL
-        self.blade_state = STATE_EXECUTE
-        self.bottom_status_msg = 'PAC: "MANUAL OPERATION!"'
-        self.state_changed.emit()
-        return True, "Entered Manual Mode successfully."
+        """Deprecated: PackML mode transitions are strictly driven by PLC telemetry via OPC UA."""
+        return True, ""
 
     def request_producing_mode(self):
-        """Exit manual mode and return to production mode"""
-        self.blade_mode = MODE_PRODUCTION
-        self.blade_state = STATE_STOPPED
-        self.manual_logged_in = False
-        self.bottom_status_msg = 'PAC: "Stopped - Ready for Production"'
-        self.state_changed.emit()
-        return True, "Returned to Production Mode (STOPPED)."
+        """Deprecated: PackML mode transitions are strictly driven by PLC telemetry via OPC UA."""
+        return True, ""
 
     def request_maintenance_mode(self):
-        """Enter maintenance mode condition check"""
-        if not getattr(self, "is_super_user", False) and self.blade_state != STATE_ABORTED:
-            return False, "PAC must be in ABORTED state to enter Maintenance Mode."
-        self.blade_mode = MODE_MAINTENANCE
-        self.blade_state = STATE_EXECUTE
-        self.hpu_state = "Execute"
-        self.bottom_status_msg = 'PAC: "MAINTENANCE OPERATION!"'
-        self.state_changed.emit()
-        return True, "Entered Maintenance Mode successfully."
+        """Deprecated: PackML mode transitions are strictly driven by PLC telemetry via OPC UA."""
+        return True, ""
 
     def exit_maintenance_mode(self):
-        """Exit maintenance mode"""
-        self.blade_mode = MODE_PRODUCTION
-        self.blade_state = STATE_ABORTED
-        self.hpu_state = "Stopped"
-        self.maint_logged_in = False
-        self.bottom_status_msg = 'PAC: "Aborted - Waiting for Clear Command"'
-        self.state_changed.emit()
-        return True, "Exited Maintenance Mode."
+        """Deprecated: PackML mode transitions are strictly driven by PLC telemetry via OPC UA."""
+        return True, ""
 
     # --- Manual Controls ---
     def select_blade(self, idx):
-        """Switch active blade"""
+        """Switch active blade view on HMI"""
         self.selected_blade_idx = idx
         self.state_changed.emit()
         return True, f"Selected {self.blades[idx].name}"
 
     def toggle_pitch_lock(self):
-        b = self.blades[self.selected_blade_idx]
-        b.pitch_lock_engaged = not b.pitch_lock_engaged
+        """Toggle manual pitch lock command (False=Engaged, True=Released)"""
+        self.manual_pitch_lock_disengaged = not self.manual_pitch_lock_disengaged
         self.state_changed.emit()
+        return self.manual_pitch_lock_disengaged
 
     def set_move_dir(self, direction):
         """direction: 1=Feather, -1=Fine, 0=Stop"""
-        b = self.blades[self.selected_blade_idx]
-        if b.pitch_lock_engaged and direction != 0:
-            return False, "Cannot move blade: Pitch Lock is currently engaged!"
         self.manual_moving_dir = direction
         return True, "Moving"
+
+    # --- Authentication Management ---
+    def authenticate(self, password: str) -> tuple[bool, str, str]:
+        """
+        Unified authentication method for Super User and Maintenance roles.
+        Synchronizes state across Manual, Maintenance, and Network pages.
+        """
+        pwd = str(password).strip()
+        pwd_hash = hash_password(pwd)
+        if pwd_hash == HASH_SUPER_USER or pwd == PASSWORD_SUPER_USER:
+            self.current_role = ROLE_SUPER_USER
+            self.is_super_user = True
+            self.manual_logged_in = True
+            self.maint_logged_in = True
+            self.auth_changed.emit(ROLE_SUPER_USER)
+            self.state_changed.emit()
+            return True, "", ROLE_SUPER_USER
+        elif pwd_hash == HASH_MAINTENANCE or pwd in (PASSWORD_MAINT_LOGIN, PASSWORD_MANUAL_CALIB):
+            self.current_role = ROLE_MAINTENANCE
+            self.is_super_user = False
+            self.manual_logged_in = True
+            self.maint_logged_in = True
+            self.auth_changed.emit(ROLE_MAINTENANCE)
+            self.state_changed.emit()
+            return True, "", ROLE_MAINTENANCE
+        return False, "Incorrect password!", ROLE_NOT_LOGGED_IN
+
+    def logout(self):
+        """Unified logout resetting roles and permissions globally"""
+        self.current_role = ROLE_NOT_LOGGED_IN
+        self.is_super_user = False
+        self.manual_logged_in = False
+        self.maint_logged_in = False
+        self.auth_changed.emit(ROLE_NOT_LOGGED_IN)
+        self.state_changed.emit()
+

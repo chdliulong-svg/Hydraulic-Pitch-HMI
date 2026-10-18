@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QFont
 
-from config import OPCUA_ENDPOINT, OPCUA_POLL_INTERVAL, TEST_AUTORUN_TIMEOUT_MS
+from config import OPCUA_ENDPOINT, OPCUA_POLL_INTERVAL, TEST_AUTORUN_TIMEOUT_MS 
 from ui.styles import QSS_STYLE
 from models.plc_state import PLCStateManager
 from models.alarm_manager import AlarmManager
@@ -90,7 +90,11 @@ def main():
         print("[TEST] Switched back to English mode successfully.")
 
         print("[TEST] All self-tests passed successfully! Exiting.")
-        QTimer.singleShot(TEST_AUTORUN_TIMEOUT_MS, app.quit)
+        def _cleanup_and_quit():
+            window.close()
+            opcua_service.stop()
+            app.quit()
+        QTimer.singleShot(TEST_AUTORUN_TIMEOUT_MS, _cleanup_and_quit)
 
     ret = app.exec()
     opcua_service.stop()

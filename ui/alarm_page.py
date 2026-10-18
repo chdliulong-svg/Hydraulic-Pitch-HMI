@@ -9,11 +9,13 @@ Aligned with PLC MpAlarmXStateEnum and FB_HistoryAlarm.st
 from pathlib import Path
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QTableWidget,
-    QTableWidgetItem, QGroupBox, QLabel, QPushButton, QHeaderView, QAbstractItemView
+    QTableWidgetItem, QGroupBox, QLabel, QPushButton, QHeaderView, QAbstractItemView,
+    QMessageBox
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont, QPixmap
 from utils.widgets import ValueDisplay
+from utils.i18n import tr
 
 
 class AlarmPage(QWidget):
@@ -273,7 +275,7 @@ class AlarmPage(QWidget):
         for r, a in enumerate(self.mgr.active_alarms):
             self.tbl_active.setItem(r, 0, QTableWidgetItem(a.timestamp))
             self.tbl_active.setItem(r, 1, QTableWidgetItem(a.name))
-            self.tbl_active.setItem(r, 2, QTableWidgetItem(a.message))
+            self.tbl_active.setItem(r, 2, QTableWidgetItem(a.get_message(self.current_lang)))
             self.tbl_active.setItem(r, 3, QTableWidgetItem(str(a.code)))
 
             dummy = QTableWidgetItem()
@@ -285,7 +287,7 @@ class AlarmPage(QWidget):
         for r, a in enumerate(self.mgr.history_alarms):
             self.tbl_history.setItem(r, 0, QTableWidgetItem(a.timestamp))
             self.tbl_history.setItem(r, 1, QTableWidgetItem(a.name))
-            self.tbl_history.setItem(r, 2, QTableWidgetItem(a.message))
+            self.tbl_history.setItem(r, 2, QTableWidgetItem(a.get_message(self.current_lang)))
             self.tbl_history.setItem(r, 3, QTableWidgetItem(str(a.code)))
 
             dummy = QTableWidgetItem()
@@ -335,7 +337,7 @@ class AlarmPage(QWidget):
             tr("State", lang)
         ]
         headers_history = [
-            tr("Active or Reset Time", lang) if lang == "CN" else tr("State active", lang),
+            tr("Active or Reset Time", lang),
             tr("Alarm Code", lang),
             tr("Message", lang),
             tr("Code", lang),
@@ -363,7 +365,7 @@ class AlarmPage(QWidget):
         self.det_state_active.set_value(active_str)
         ack_str = tr("Acknowledged", self.current_lang) if a.is_acked else tr("Unacknowledged", self.current_lang)
         self.det_state_ack.set_value(ack_str)
-        self.det_message.set_value(a.message)
+        self.det_message.set_value(a.get_message(self.current_lang))
 
     def clear_alarm_details(self):
         self.det_code.set_value("-")
@@ -373,21 +375,36 @@ class AlarmPage(QWidget):
         self.det_message.set_value("-")
 
     def ack_selected(self):
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot acknowledge alarms!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
         row = self.tbl_active.currentRow()
         if 0 <= row < len(self.mgr.active_alarms):
-            self.mgr.acknowledge_selected(self.mgr.active_alarms[row].code)
+            self.opcua_service.send_ack_all()
+            self.opcua_service.force_poll_alarms()
 
     def _on_ack_all_clicked(self):
-        self.mgr.acknowledge_all()
-        if self.opcua_service and self.plc.is_opcua_online:
-            self.opcua_service.send_ack_all()
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot acknowledge alarms!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
+        self.opcua_service.send_ack_all()
+        self.opcua_service.force_poll_alarms()
 
     def _on_reset_safety_clicked(self):
-        self.mgr.reset_safety()
-        self.plc.safety_ok = True
-        self.plc.state_changed.emit()
-        if self.opcua_service and self.plc.is_opcua_online:
-            self.opcua_service.send_reset()
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot reset safety!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
+        self.opcua_service.send_reset()
+        self.opcua_service.force_poll_alarms()
 
     def reset_safety_clicked(self):
         self._on_reset_safety_clicked()

@@ -12,7 +12,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from utils.widgets import StatusLed
-from config import OPCUA_PORT, OPCUA_POLL_INTERVAL, OPCUA_TEST_TIMEOUT
+from utils.i18n import tr
+from config import OPCUA_HOST, OPCUA_PORT, OPCUA_POLL_INTERVAL, OPCUA_TEST_TIMEOUT
 
 try:
     from asyncua import Client
@@ -66,10 +67,9 @@ class OpcUaSettingsDialog(QDialog):
         self._poll_interval = OPCUA_POLL_INTERVAL
         self._is_reconnecting = False
 
-        is_cn = getattr(parent, "current_lang", "EN") == "CN" if parent else False
-        self.is_cn = is_cn
+        self.current_lang = getattr(parent, "current_lang", "EN") if parent else "EN"
 
-        self.setWindowTitle("OPC UA 连接设置" if is_cn else "OPC UA Connection Settings")
+        self.setWindowTitle(tr("OPC UA Connection Settings", self.current_lang))
         self.resize(440, 210)
         self.setMinimumSize(420, 200)
         self.setStyleSheet("""
@@ -121,12 +121,12 @@ class OpcUaSettingsDialog(QDialog):
         self.led_status = StatusLed(color="grey", shape="circle", size=12)
         hdr.addWidget(self.led_status)
 
-        self.lbl_diag_status = QLabel("离线 / Disconnected" if self.is_cn else "Offline / Disconnected")
+        self.lbl_diag_status = QLabel(tr("Offline / Disconnected", self.current_lang))
         self.lbl_diag_status.setStyleSheet("font-weight: bold; font-size: 12px; color: #64748B;")
         hdr.addWidget(self.lbl_diag_status)
         hdr.addStretch()
 
-        self.lbl_stat_frames = QLabel("数据帧: 0" if self.is_cn else "Frames: 0")
+        self.lbl_stat_frames = QLabel(tr("Frames: {frames:,}", self.current_lang).format(frames=0))
         self.lbl_stat_frames.setStyleSheet("font-size: 11px; color: #94A3B8;")
         hdr.addWidget(self.lbl_stat_frames)
         main_layout.addLayout(hdr)
@@ -141,7 +141,7 @@ class OpcUaSettingsDialog(QDialog):
         ip_row = QHBoxLayout()
         ip_row.setSpacing(8)
 
-        lbl_ip = QLabel("PLC 服务器 IP:" if self.is_cn else "Server IP / Host:")
+        lbl_ip = QLabel(tr("Server IP / Host:", self.current_lang))
         lbl_ip.setStyleSheet("font-weight: 500;")
         ip_row.addWidget(lbl_ip)
 
@@ -150,7 +150,7 @@ class OpcUaSettingsDialog(QDialog):
         self.txt_ip.editingFinished.connect(self._on_ip_edit_finished)
         ip_row.addWidget(self.txt_ip, 1)
 
-        self.btn_test = QPushButton("🔍 测试连接" if self.is_cn else "🔍 Test")
+        self.btn_test = QPushButton(tr("🔍 Test", self.current_lang))
         self.btn_test.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_test.setStyleSheet("""
             QPushButton {
@@ -175,7 +175,7 @@ class OpcUaSettingsDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        self.btn_disconnect = QPushButton("断开连接" if self.is_cn else "Disconnect")
+        self.btn_disconnect = QPushButton(tr("Disconnect", self.current_lang))
         self.btn_disconnect.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_disconnect.setStyleSheet("""
             QPushButton {
@@ -193,7 +193,7 @@ class OpcUaSettingsDialog(QDialog):
 
         btn_box.addStretch()
 
-        self.btn_apply = QPushButton("应用并重连" if self.is_cn else "Apply && Reconnect")
+        self.btn_apply = QPushButton(tr("Apply && Reconnect", self.current_lang))
         self.btn_apply.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_apply.setStyleSheet("""
             QPushButton {
@@ -206,7 +206,7 @@ class OpcUaSettingsDialog(QDialog):
         self.btn_apply.clicked.connect(self.on_apply_clicked)
         btn_box.addWidget(self.btn_apply)
 
-        self.btn_close = QPushButton("关闭" if self.is_cn else "Close")
+        self.btn_close = QPushButton(tr("Close", self.current_lang))
         self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_close.setStyleSheet("""
             QPushButton {
@@ -222,12 +222,12 @@ class OpcUaSettingsDialog(QDialog):
         main_layout.addLayout(btn_box)
 
     def get_endpoint_url(self):
-        ip = self.txt_ip.text().strip() or "127.0.0.1"
+        ip = self.txt_ip.text().strip() or OPCUA_HOST
         return f"opc.tcp://{ip}:{self._port}"
 
     def _on_ip_edit_finished(self):
         if not self.txt_ip.text().strip():
-            self.txt_ip.setText("127.0.0.1")
+            self.txt_ip.setText(OPCUA_HOST)
 
     def load_current_values(self):
         if not self.service:
@@ -250,32 +250,32 @@ class OpcUaSettingsDialog(QDialog):
 
         if is_online:
             self.led_status.set_color("green")
-            self.lbl_diag_status.setText(f"在线: {self.service.endpoint_url}" if self.is_cn else f"Online: {self.service.endpoint_url}")
+            self.lbl_diag_status.setText(tr("Online: {url}", self.current_lang).format(url=self.service.endpoint_url))
             self.lbl_diag_status.setStyleSheet("font-size: 12px; font-weight: bold; color: #16A34A;")
             self.btn_disconnect.setEnabled(True)
 
             # If waiting for reconnect, update prompt text to success
             if self._is_reconnecting:
                 self._is_reconnecting = False
-                self.lbl_test_result.setText("✔ 连接已成功建立，通信正常" if self.is_cn else "✔ Connection established successfully")
+                self.lbl_test_result.setText(tr("✔ Connection established successfully", self.current_lang))
                 self.lbl_test_result.setStyleSheet("font-size: 11px; color: #16A34A; font-weight: bold;")
         else:
             self.led_status.set_color("grey")
-            self.lbl_diag_status.setText(f"离线: {status_msg}" if self.is_cn else f"Offline: {status_msg}")
+            self.lbl_diag_status.setText(tr("Offline: {msg}", self.current_lang).format(msg=status_msg))
             self.lbl_diag_status.setStyleSheet("font-size: 12px; font-weight: bold; color: #DC2626;")
             self.btn_disconnect.setEnabled(False)
 
             if self._is_reconnecting and status_msg and status_msg != "Disconnected":
-                self.lbl_test_result.setText(f"正在尝试连接: {status_msg}..." if self.is_cn else f"Reconnecting: {status_msg}...")
+                self.lbl_test_result.setText(tr("Reconnecting: {msg}...", self.current_lang).format(msg=status_msg))
                 self.lbl_test_result.setStyleSheet("font-size: 11px; color: #D97706; font-weight: bold;")
 
         # Telemetry frames count
         frames = getattr(self.service, "frames_received", 0)
-        self.lbl_stat_frames.setText(f"数据帧: {frames:,}" if self.is_cn else f"Frames: {frames:,}")
+        self.lbl_stat_frames.setText(tr("Frames: {frames:,}", self.current_lang).format(frames=frames))
 
     def on_test_clicked(self):
         url = self.get_endpoint_url()
-        self.lbl_test_result.setText("正在测试连接..." if self.is_cn else "Testing connection...")
+        self.lbl_test_result.setText(tr("Testing connection...", self.current_lang))
         self.lbl_test_result.setStyleSheet("font-size: 11px; color: #D97706; font-weight: bold;")
         self.btn_test.setEnabled(False)
 
@@ -286,10 +286,10 @@ class OpcUaSettingsDialog(QDialog):
     def _on_test_finished(self, success, msg, latency):
         self.btn_test.setEnabled(True)
         if success:
-            self.lbl_test_result.setText(f"✔ 通信正常 (延迟: {latency:.1f} ms)" if self.is_cn else f"✔ Connected ({latency:.1f} ms)")
+            self.lbl_test_result.setText(tr("✔ Connected ({latency:.1f} ms)", self.current_lang).format(latency=latency))
             self.lbl_test_result.setStyleSheet("font-size: 11px; color: #16A34A; font-weight: bold;")
         else:
-            self.lbl_test_result.setText(f"✖ 连接失败: {msg}" if self.is_cn else f"✖ Failed: {msg}")
+            self.lbl_test_result.setText(tr("✖ Failed: {msg}", self.current_lang).format(msg=msg))
             self.lbl_test_result.setStyleSheet("font-size: 11px; color: #DC2626;")
 
     def on_apply_clicked(self):
@@ -304,13 +304,22 @@ class OpcUaSettingsDialog(QDialog):
                 self.service.endpoint_url = new_url
                 self.service.poll_interval = poll_sec
 
-        self.lbl_test_result.setText(f"正在重连至 {new_url}..." if self.is_cn else f"Reconnecting to {new_url}...")
+        self.lbl_test_result.setText(tr("Reconnecting to {url}...", self.current_lang).format(url=new_url))
         self.lbl_test_result.setStyleSheet("font-size: 11px; color: #2563EB; font-weight: bold;")
 
     def on_disconnect_clicked(self):
         self._is_reconnecting = False
         if hasattr(self.service, "disconnect_client"):
             self.service.disconnect_client()
-        self.lbl_test_result.setText("已主动断开连接" if self.is_cn else "Disconnected from server")
+        self.lbl_test_result.setText(tr("Disconnected from server", self.current_lang))
         self.lbl_test_result.setStyleSheet("font-size: 11px; color: #64748B;")
         self.update_diagnostics()
+
+    def closeEvent(self, event):
+        if self.tester_thread and self.tester_thread.isRunning():
+            try:
+                self.tester_thread.test_finished.disconnect(self._on_test_finished)
+            except Exception:
+                pass
+            self.tester_thread.wait(500)
+        super().closeEvent(event)

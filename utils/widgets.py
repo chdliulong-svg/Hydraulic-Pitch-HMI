@@ -13,6 +13,9 @@ from PyQt6.QtGui import (
     QLinearGradient, QRadialGradient, QPainterPath
 )
 from PyQt6.QtCore import Qt, QPointF, QRectF, pyqtSignal, QSize
+from utils.logger import get_logger
+
+logger = get_logger("widgets")
 
 
 def _get_hex_points(cx, cy, r):
@@ -265,7 +268,7 @@ class StatusLed(QWidget):
 
 class ValueDisplay(QWidget):
     """Standard Industrial Name - Value Box with Unit"""
-    def __init__(self, label_text, unit="", initial_val="0.0", label_width=110,
+    def __init__(self, label_text, unit="", initial_val="-", label_width=110,
                  stretch_val=True, width=80, align=Qt.AlignmentFlag.AlignLeft, label_boxed=True, parent=None):
         super().__init__(parent)
         self.raw_label = label_text
@@ -340,11 +343,11 @@ class WarningModal(QDialog):
     """Safety Warning Modal dialog before entering manual/maintenance mode.
     Directly associated with CODESYS Common.hmi.msgBox.btnOk / btnAbort.
     """
-    def __init__(self, title, message, parent=None, opcua_service=None):
+    def __init__(self, title, message, parent=None, opcua_service=None, show_ok=True, show_abort=True, abort_text=None):
         super().__init__(parent)
         self.opcua_service = opcua_service
         self.setWindowTitle(title)
-        self.setFixedSize(450, 180)
+        self.setFixedSize(480, 190)
         self.setModal(True)
 
         layout = QVBoxLayout(self)
@@ -356,9 +359,33 @@ class WarningModal(QDialog):
         lbl_msg.setStyleSheet("font-size: 13px; font-weight: bold; color: #B71C1C;")
         layout.addWidget(lbl_msg)
 
-        self.btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.btns.accepted.connect(self.accept)
-        self.btns.rejected.connect(self.reject)
+        btn_flags = QDialogButtonBox.StandardButton.NoButton
+        if show_ok:
+            btn_flags |= QDialogButtonBox.StandardButton.Ok
+        if show_abort:
+            btn_flags |= QDialogButtonBox.StandardButton.Cancel
+
+        self.btns = QDialogButtonBox(btn_flags)
+        if show_ok:
+            self.btns.accepted.connect(self.accept)
+        if show_abort:
+            self.btns.rejected.connect(self.reject)
+            btn_cancel = self.btns.button(QDialogButtonBox.StandardButton.Cancel)
+            if btn_cancel:
+                if abort_text:
+                    btn_cancel.setText(abort_text)
+                btn_cancel.setStyleSheet("""
+                    QPushButton {
+                        background-color: #DC2626;
+                        color: white;
+                        font-weight: bold;
+                        border-radius: 4px;
+                        padding: 6px 16px;
+                    }
+                    QPushButton:hover {
+                        background-color: #B91C1C;
+                    }
+                """)
         layout.addWidget(self.btns)
 
     def accept(self):
@@ -367,7 +394,7 @@ class WarningModal(QDialog):
             try:
                 self.opcua_service.send_msgbox_ok()
             except Exception as e:
-                print(f"[WarningModal] Error pulsing msgbox OK: {e}")
+                logger.error(f"[WarningModal] Error pulsing msgbox OK: {e}")
         super().accept()
 
     def reject(self):
@@ -376,6 +403,6 @@ class WarningModal(QDialog):
             try:
                 self.opcua_service.send_msgbox_abort()
             except Exception as e:
-                print(f"[WarningModal] Error pulsing msgbox Abort: {e}")
+                logger.error(f"[WarningModal] Error pulsing msgbox Abort: {e}")
         super().reject()
 

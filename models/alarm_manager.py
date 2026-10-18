@@ -8,6 +8,7 @@ Alarms are reported by the PLC; HMI displays and resets them without local sever
 
 from datetime import datetime
 from PyQt6.QtCore import QObject, pyqtSignal
+from models.alarm_database import get_alarm_def, AlarmDefinition
 
 
 class MpAlarmXStateEnum:
@@ -26,15 +27,26 @@ class AlarmEvent:
 
 
 class AlarmItem:
-    """Active Alarm entry"""
-    def __init__(self, code, name, message, state=MpAlarmXStateEnum.ACTIVE, active_time=None):
-        self.code = code
-        self.name = name
-        self.message = message
+    """Active Alarm entry enriched with static metadata from alarm_database"""
+    def __init__(self, code, name=None, message=None, state=MpAlarmXStateEnum.ACTIVE, active_time=None, severity=None):
+        self.code = int(code)
+        self.def_info = get_alarm_def(self.code)
+        self.name = name if (name and name != f"Alarm_{self.code}") else self.def_info.name
+        self._custom_message = message if (message and not message.startswith("Alarm code ") and not message.startswith("未知报警代码 ")) else None
+        self.severity = severity if severity is not None else self.def_info.severity
         self.state = state
         self.active_time = active_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self.reset_time = None
         self.ack_time = None
+
+    def get_message(self, lang="EN") -> str:
+        if self._custom_message:
+            return self._custom_message
+        return self.def_info.get_message(lang)
+
+    @property
+    def message(self) -> str:
+        return self.get_message("EN")
 
     @property
     def is_active(self):
@@ -57,15 +69,26 @@ class AlarmItem:
 
 
 class HistoryLogItem:
-    """History Log Item matching PLC ST_HistoryAlarmItem.st"""
-    def __init__(self, code, name, message, event_type, timestamp, state_before=None, state_after=None):
-        self.code = code
-        self.name = name
-        self.message = message
+    """History Log Item matching PLC ST_HistoryAlarmItem.st enriched with alarm_database"""
+    def __init__(self, code, name=None, message=None, event_type=AlarmEvent.EVENT_ACTIVE, timestamp=None, state_before=None, state_after=None, severity=None):
+        self.code = int(code)
+        self.def_info = get_alarm_def(self.code)
+        self.name = name if (name and name != f"Alarm_{self.code}") else self.def_info.name
+        self._custom_message = message if (message and not message.startswith("Alarm code ") and not message.startswith("未知报警代码 ")) else None
+        self.severity = severity if severity is not None else self.def_info.severity
         self.event_type = event_type  # AlarmEvent.EVENT_ACTIVE / EVENT_RESET / EVENT_ACK
-        self.timestamp = timestamp    # Exact time when this event happened (Activation time or Reset time)
+        self.timestamp = timestamp or datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self.state_before = state_before
         self.state_after = state_after
+
+    def get_message(self, lang="EN") -> str:
+        if self._custom_message:
+            return self._custom_message
+        return self.def_info.get_message(lang)
+
+    @property
+    def message(self) -> str:
+        return self.get_message("EN")
 
     @property
     def is_active(self):
@@ -85,15 +108,17 @@ class AlarmManager(QObject):
         self.history_alarms = []
 
     def update_from_opcua(self, active_list: list, history_list: list):
-        """Update active and history alarms directly from CODESYS PLC"""
+        """Update active and history alarms directly from CODESYS PLC with local database enrichment"""
         # 1. Update active alarms
         new_active = []
         for item in active_list:
             code = item.get("code", 0)
-            name = item.get("name", "")
-            msg = item.get("message", "")
+            name = item.get("name")
+            msg = item.get("message")
+            sev = item.get("severity")
             state = item.get("state", MpAlarmXStateEnum.ACTIVE)
-            a_item = AlarmItem(code, name, msg, state=state)
+            t_str = item.get("timestamp")
+            a_item = AlarmItem(code, name=name, message=msg, state=state, active_time=t_str, severity=sev)
             new_active.append(a_item)
         self.active_alarms = new_active
 
@@ -102,8 +127,9 @@ class AlarmManager(QObject):
             new_history = []
             for item in history_list:
                 code = item.get("code", 0)
-                name = item.get("name", "")
-                msg = item.get("message", "")
+                name = item.get("name")
+                msg = item.get("message")
+                sev = item.get("severity")
                 t_str = item.get("timestamp") or datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                 state = item.get("state", MpAlarmXStateEnum.ACTIVE)
                 
@@ -114,7 +140,7 @@ class AlarmManager(QObject):
                 else:
                     evt = AlarmEvent.EVENT_RESET
 
-                h_item = HistoryLogItem(code, name, msg, evt, t_str, state_after=state)
+                h_item = HistoryLogItem(code, name=name, message=msg, event_type=evt, timestamp=t_str, state_after=state, severity=sev)
                 new_history.append(h_item)
             self.history_alarms = new_history
 
@@ -127,9 +153,10 @@ class AlarmManager(QObject):
                 a.state = MpAlarmXStateEnum.ACKNOWLEDGED
                 a.ack_time = now_str
                 # Record Acknowledgment event in History
-                self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a.message,
+                self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a._custom_message,
                                                              AlarmEvent.EVENT_ACK, now_str,
-                                                             MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.ACKNOWLEDGED))
+                                                             MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.ACKNOWLEDGED,
+                                                             severity=a.severity))
         self.alarms_changed.emit()
 
     def acknowledge_all(self):
@@ -138,9 +165,10 @@ class AlarmManager(QObject):
             if a.state == MpAlarmXStateEnum.ACTIVE:
                 a.state = MpAlarmXStateEnum.ACKNOWLEDGED
                 a.ack_time = now_str
-                self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a.message,
+                self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a._custom_message,
                                                              AlarmEvent.EVENT_ACK, now_str,
-                                                             MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.ACKNOWLEDGED))
+                                                             MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.ACKNOWLEDGED,
+                                                             severity=a.severity))
         self.alarms_changed.emit()
 
     def reset_safety(self):
@@ -149,18 +177,20 @@ class AlarmManager(QObject):
         for a in self.active_alarms:
             a.state = MpAlarmXStateEnum.INACTIVE
             a.reset_time = now_str
-            self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a.message,
+            self.history_alarms.insert(0, HistoryLogItem(a.code, a.name, a._custom_message,
                                                          AlarmEvent.EVENT_RESET, now_str,
-                                                         MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.INACTIVE))
+                                                         MpAlarmXStateEnum.ACTIVE, MpAlarmXStateEnum.INACTIVE,
+                                                         severity=a.severity))
         self.active_alarms.clear()
         self.alarms_changed.emit()
 
-    def trigger_alarm(self, code, name, message):
+    def trigger_alarm(self, code, name=None, message=None):
         """Trigger a new alarm and log Activation event (记录激活时间)"""
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        item = AlarmItem(code, name, message, state=MpAlarmXStateEnum.ACTIVE, active_time=now_str)
+        item = AlarmItem(code, name=name, message=message, state=MpAlarmXStateEnum.ACTIVE, active_time=now_str)
         self.active_alarms.insert(0, item)
-        self.history_alarms.insert(0, HistoryLogItem(code, name, message,
-                                                     AlarmEvent.EVENT_ACTIVE, now_str,
-                                                     MpAlarmXStateEnum.INACTIVE, MpAlarmXStateEnum.ACTIVE))
+        self.history_alarms.insert(0, HistoryLogItem(code, name=name, message=message,
+                                                     event_type=AlarmEvent.EVENT_ACTIVE, timestamp=now_str,
+                                                     state_before=MpAlarmXStateEnum.INACTIVE, state_after=MpAlarmXStateEnum.ACTIVE,
+                                                     severity=item.severity))
         self.alarms_changed.emit()

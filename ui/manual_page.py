@@ -15,7 +15,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QIntValidator, QDoubleValidator
 from config import (
-    MODE_MANUAL, MODE_PRODUCTION, STATE_STOPPED, PASSWORD_MANUAL_CALIB, PASSWORD_SUPER_USER,
+    MODE_MANUAL, MODE_PRODUCTION, STATE_STOPPED,
+    ROLE_NOT_LOGGED_IN,
     MANUAL_FAST_SPEED_DEFAULT, MANUAL_SLOW_SPEED_DEFAULT,
     MANUAL_SPEED_MIN, MANUAL_SPEED_MAX,
     GRD_MIN_VALUE, GRD_MAX_VALUE,
@@ -24,6 +25,7 @@ from config import (
 from utils.widgets import StatusLed, WarningModal, ValueDisplay
 from ui.login_card import LoginCard
 from ui.mode_card import ModeCard
+from utils.i18n import tr
 
 
 class ManualPage(QWidget):
@@ -43,59 +45,54 @@ class ManualPage(QWidget):
     def retranslate_ui(self, lang="EN"):
         from utils.i18n import tr
         self.current_lang = lang
-        is_cn = (lang == "CN")
 
-        self.grp_calib_pos.setTitle("变桨位置标定 [deg]" if is_cn else "Pitch Position Calibration [deg]")
-        self.grp_calib_grd.setTitle("GRD 标定 [cm/s]" if is_cn else "GRD Calibration [cm/s]")
-        self.grp_lub.setTitle("叶片润滑" if is_cn else "Blade Lubrication")
-        self.grp_blade_ctrl.setTitle("HMI 变桨控制" if is_cn else "HMI Blade Control")
+        self.grp_calib_pos.setTitle(tr("Pitch Position Calibration [deg]", lang))
+        self.grp_calib_grd.setTitle(tr("GRD Calibration [cm/s]", lang))
+        self.grp_lub.setTitle(tr("Blade Lubrication", lang))
+        self.grp_blade_ctrl.setTitle(tr("HMI Blade Control", lang))
         self.login_card.retranslate_ui(lang)
         self.grp_mode.retranslate_ui(lang)
 
-        self.btn_apply_pos_calib.setText("应用更改" if is_cn else "Apply Changes")
-        self.btn_apply_grd.setText("应用更改" if is_cn else "Apply Changes")
+        self.btn_apply_pos_calib.setText(tr("Apply Changes", lang))
+        self.btn_apply_grd.setText(tr("Apply Changes", lang))
 
-        self.lbl_hdr_pos_blade.setText("叶片" if is_cn else "Blade")
-        self.lbl_hdr_pos_cur.setText("当前值" if is_cn else "Current")
-        self.lbl_hdr_pos_off.setText("偏置" if is_cn else "Offset [°]")
+        self.lbl_hdr_pos_blade.setText(tr("Blade", lang))
+        self.lbl_hdr_pos_cur.setText(tr("Current", lang))
+        self.lbl_hdr_pos_off.setText(tr("Offset [°]", lang))
 
-        self.lbl_hdr_grd_blade.setText("叶片" if is_cn else "Blade")
-        self.lbl_hdr_grd_cur.setText("当前值" if is_cn else "Current")
-        self.lbl_hdr_grd_new.setText("新设定" if is_cn else "New")
+        self.lbl_hdr_grd_blade.setText(tr("Blade", lang))
+        self.lbl_hdr_grd_cur.setText(tr("Current", lang))
+        self.lbl_hdr_grd_new.setText(tr("New", lang))
 
         for i, name in enumerate(["A", "B", "C"]):
-            prefix = "叶片 " if is_cn else "Blade "
+            prefix = tr("Blade", lang) + " "
             self.lbl_pos_blade_names[i].setText(f"{prefix}{name}")
             self.lbl_grd_blade_names[i].setText(f"{prefix}{name}")
 
         for edit in getattr(self, "edit_offsets", []):
             edit.setToolTip(
-                f"偏置有效范围: {OFFSET_MIN_DEG:.1f}° ~ {OFFSET_MAX_DEG:.1f}°"
-                if is_cn
-                else f"Offset Valid Range: {OFFSET_MIN_DEG:.1f}° ~ {OFFSET_MAX_DEG:.1f}°"
+                f"{tr('Offset Valid Range', lang)}: {OFFSET_MIN_DEG:.1f}° ~ {OFFSET_MAX_DEG:.1f}°"
             )
 
         for edit in getattr(self, "grd_new_edits", []):
             edit.setToolTip(
-                f"GRD 有效范围: {GRD_MIN_VALUE} ~ {GRD_MAX_VALUE} pulse/(cm/s)"
-                if is_cn
-                else f"GRD Valid Range: {GRD_MIN_VALUE} ~ {GRD_MAX_VALUE} pulse/(cm/s)"
+                f"{tr('GRD Valid Range', lang)}: {GRD_MIN_VALUE} ~ {GRD_MAX_VALUE} pulse/(cm/s)"
             )
 
-        self.lbl_blade_sel_title.setText("桨叶选择" if is_cn else "Blade selected")
-        self.lbl_blade_safe_title.setText("桨叶安全" if is_cn else "Blade safe")
-        self.lbl_remote_box_speed_title.setText("手操盒速度" if is_cn else "Remote box speed")
-        self.lbl_fast_spd_title.setText("快速" if is_cn else "Fast speed")
-        self.lbl_slow_spd_title.setText("慢速" if is_cn else "Slow speed")
-        self.lbl_pos_mon_title.setText("当前开度" if is_cn else "Current Pos.")
-        self.lbl_pitch_lock_title.setText("变桨锁控制" if is_cn else "Pitch Lock Control")
-        self.lbl_speed_mode_title.setText("快/慢速选择" if is_cn else "Fast/Slow Speed")
-        self.lbl_move_blade_title.setText("移动桨叶" if is_cn else "Move Blade")
+        self.lbl_blade_sel_title.setText(tr("Blade selected", lang))
+        self.lbl_blade_safe_title.setText(tr("Blade safe", lang))
+        self.lbl_remote_box_speed_title.setText(tr("Remote box speed", lang))
+        self.lbl_fast_spd_title.setText(tr("Fast speed", lang))
+        self.lbl_slow_spd_title.setText(tr("Slow speed", lang))
+        self.lbl_pos_mon_title.setText(tr("Current Pos.", lang))
+        self.lbl_pitch_lock_title.setText(tr("Pitch Lock Control", lang))
+        self.lbl_speed_mode_title.setText(tr("Fast/Slow Speed", lang))
+        self.lbl_move_blade_title.setText(tr("Move Blade", lang))
 
-        self.lbl_p1_title.setText("润滑泵 1:" if is_cn else "Pump 1:")
-        self.lbl_p2_title.setText("润滑泵 2:" if is_cn else "Pump 2:")
-        self.btn_move_feather.setText("顺桨" if is_cn else "Feather")
-        self.btn_move_fine.setText("开桨" if is_cn else "Fine")
+        self.lbl_p1_title.setText(tr("Pump 1:", lang))
+        self.lbl_p2_title.setText(tr("Pump 2:", lang))
+        self.btn_move_feather.setText(tr("Feather", lang))
+        self.btn_move_fine.setText(tr("Fine", lang))
 
         self.update_ui_state()
 
@@ -237,9 +234,9 @@ class ManualPage(QWidget):
             edit.setValidator(val_validator)
             edit.setPlaceholderText(f"{OFFSET_MIN_DEG:.1f}~{OFFSET_MAX_DEG:.1f}")
             edit.setToolTip(
-                f"偏置有效范围: {OFFSET_MIN_DEG:.1f}° ~ {OFFSET_MAX_DEG:.1f}°"
-                if self.current_lang == "CN"
-                else f"Offset Valid Range: {OFFSET_MIN_DEG:.1f}° ~ {OFFSET_MAX_DEG:.1f}°"
+                tr("Offset Valid Range: {min_deg:.1f}° ~ {max_deg:.1f}°", self.current_lang).format(
+                    min_deg=OFFSET_MIN_DEG, max_deg=OFFSET_MAX_DEG
+                )
             )
             edit.textEdited.connect(self.on_pos_text_changed)
             edit.editingFinished.connect(lambda e=edit, idx=row-1: self._on_pos_edit_finished(e, idx))
@@ -330,9 +327,9 @@ class ManualPage(QWidget):
             edit.setValidator(QIntValidator(GRD_MIN_VALUE, GRD_MAX_VALUE, self))
             edit.setPlaceholderText(f"{GRD_MIN_VALUE}-{GRD_MAX_VALUE}")
             edit.setToolTip(
-                f"GRD 有效范围: {GRD_MIN_VALUE} ~ {GRD_MAX_VALUE} pulse/(cm/s)"
-                if self.current_lang == "CN"
-                else f"GRD Valid Range: {GRD_MIN_VALUE} ~ {GRD_MAX_VALUE} pulse/(cm/s)"
+                tr("GRD Valid Range: {min_val} ~ {max_val} pulse/(cm/s)", self.current_lang).format(
+                    min_val=GRD_MIN_VALUE, max_val=GRD_MAX_VALUE
+                )
             )
             edit.textEdited.connect(self.on_grd_text_changed)
             edit.editingFinished.connect(lambda e=edit, idx=row-1: self._on_grd_edit_finished(e, idx))
@@ -373,25 +370,25 @@ class ManualPage(QWidget):
             parent=self
         )
         self.login_card.login_changed.connect(lambda _: self.update_ui_state())
+        self.plc.auth_changed.connect(self._on_auth_changed)
         self.btn_login = self.login_card.btn_login
         self.edit_password = self.login_card.edit_password
         self.badge_login_status = self.login_card.badge_status
         return self.login_card
 
     def _handle_manual_login(self, pwd):
-        if pwd in [PASSWORD_SUPER_USER, "super"]:
-            self.plc.manual_logged_in = True
-            self.plc.is_super_user = True
+        ok, msg, role = self.plc.authenticate(pwd)
+        if ok:
             return True, ""
-        elif pwd in [PASSWORD_MANUAL_CALIB, "asdf"]:
-            self.plc.manual_logged_in = True
-            self.plc.is_super_user = False
-            return True, ""
-        return False, "密码不正确！" if self.current_lang == "CN" else "Incorrect password!"
+        return False, tr("Incorrect password!", self.current_lang)
 
     def _handle_manual_logout(self):
-        self.plc.manual_logged_in = False
-        self.plc.is_super_user = False
+        self.plc.logout()
+
+    def _on_auth_changed(self, role):
+        is_logged = (role != ROLE_NOT_LOGGED_IN)
+        self.login_card.set_state(is_logged, role if is_logged else None)
+        self.update_ui_state()
 
     def _create_lubrication_group(self):
         grp = QGroupBox("Blade Lubrication")
@@ -414,7 +411,7 @@ class ManualPage(QWidget):
         # Pump 1 Card
         row_p1 = QHBoxLayout()
         row_p1.setSpacing(10)
-        self.led_pump1 = StatusLed(color="green", shape="circle", size=14)
+        self.led_pump1 = StatusLed(color="grey", shape="circle", size=14)
         self.lbl_p1_title = QLabel("Pump 1:")
         self.lbl_p1_title.setFixedWidth(64)
         self.lbl_p1_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #334155;")
@@ -429,7 +426,7 @@ class ManualPage(QWidget):
         # Pump 2 Card
         row_p2 = QHBoxLayout()
         row_p2.setSpacing(10)
-        self.led_pump2 = StatusLed(color="green", shape="circle", size=14)
+        self.led_pump2 = StatusLed(color="grey", shape="circle", size=14)
         self.lbl_p2_title = QLabel("Pump 2:")
         self.lbl_p2_title.setFixedWidth(64)
         self.lbl_p2_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #334155;")
@@ -543,8 +540,8 @@ class ManualPage(QWidget):
         for col, b_name in enumerate(["A", "B", "C"]):
             lbl_b = QLabel(b_name)
             lbl_b.setStyleSheet("font-size: 11px; font-weight: bold; color: #1E293B;")
-            led = StatusLed(color="green", shape="circle", size=14)
-            led.set_state(True)
+            led = StatusLed(color="grey", shape="circle", size=14)
+            led.set_state(False)
             self.safe_leds.append(led)
 
             h = QHBoxLayout()
@@ -802,19 +799,18 @@ class ManualPage(QWidget):
         in_manual = (self.plc.blade_mode == MODE_MANUAL)
         logged_in = self.plc.manual_logged_in
         is_super = getattr(self.plc, "is_super_user", False)
-        is_cn = (self.current_lang == "CN")
 
         # 1. Update Calibration Authorization Badges & Controls
         unlocked = logged_in or is_super
         if unlocked:
-            self.badge_pos_auth.setText("🔓 已解锁" if is_cn else "🔓 Unlocked")
+            self.badge_pos_auth.setText(tr("🔓 Unlocked", self.current_lang))
             self.badge_pos_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #059669; background-color: #D1FAE5; border: 1px solid #A7F3D0; border-radius: 3px; padding: 2px 8px;")
-            self.badge_grd_auth.setText("🔓 已解锁" if is_cn else "🔓 Unlocked")
+            self.badge_grd_auth.setText(tr("🔓 Unlocked", self.current_lang))
             self.badge_grd_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #059669; background-color: #D1FAE5; border: 1px solid #A7F3D0; border-radius: 3px; padding: 2px 8px;")
         else:
-            self.badge_pos_auth.setText("🔒 需登录" if is_cn else "🔒 Require Login")
+            self.badge_pos_auth.setText(tr("🔒 Require Login", self.current_lang))
             self.badge_pos_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #D97706; background-color: #FEF3C7; border: 1px solid #FDE68A; border-radius: 3px; padding: 2px 8px;")
-            self.badge_grd_auth.setText("🔒 需登录" if is_cn else "🔒 Require Login")
+            self.badge_grd_auth.setText(tr("🔒 Require Login", self.current_lang))
             self.badge_grd_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #D97706; background-color: #FEF3C7; border: 1px solid #FDE68A; border-radius: 3px; padding: 2px 8px;")
 
         self.btn_apply_pos_calib.setEnabled(unlocked)
@@ -835,22 +831,28 @@ class ManualPage(QWidget):
                     edit.setStyleSheet("")
 
         # 2. Update Manual Controls Badges & Controls
-        controls_allowed = in_manual or is_super
-        if controls_allowed:
-            self.badge_lub_auth.setText(("✔ 超级权限" if is_super else "✔ 就绪") if is_cn else ("✔ Super Access" if is_super else "✔ Ready"))
+        is_online = getattr(self.plc, "is_opcua_online", False)
+        controls_allowed = (in_manual or is_super) and is_online
+        if not is_online:
+            self.badge_lub_auth.setText(tr("🔒 Offline", self.current_lang))
+            self.badge_lub_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #DC2626; background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 3px; padding: 2px 8px;")
+            self.badge_ctrl_auth.setText(tr("🔒 Offline", self.current_lang))
+            self.badge_ctrl_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #DC2626; background-color: #FEF2F2; border: 1px solid #FECACA; border-radius: 3px; padding: 2px 8px;")
+        elif controls_allowed:
+            self.badge_lub_auth.setText(tr("✔ Super Access" if is_super else "✔ Ready", self.current_lang))
             self.badge_lub_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #059669; background-color: #D1FAE5; border: 1px solid #A7F3D0; border-radius: 3px; padding: 2px 8px;")
-            self.badge_ctrl_auth.setText(("✔ 超级权限" if is_super else "✔ 就绪") if is_cn else ("✔ Super Access" if is_super else "✔ Ready"))
+            self.badge_ctrl_auth.setText(tr("✔ Super Access" if is_super else "✔ Ready", self.current_lang))
             self.badge_ctrl_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #059669; background-color: #D1FAE5; border: 1px solid #A7F3D0; border-radius: 3px; padding: 2px 8px;")
         else:
-            self.badge_lub_auth.setText("🔒 需手动模式" if is_cn else "🔒 Require Manual Mode")
+            self.badge_lub_auth.setText(tr("🔒 Require Manual Mode", self.current_lang))
             self.badge_lub_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #64748B; background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 3px; padding: 2px 8px;")
-            self.badge_ctrl_auth.setText("🔒 需手动模式" if is_cn else "🔒 Require Manual Mode")
+            self.badge_ctrl_auth.setText(tr("🔒 Require Manual Mode", self.current_lang))
             self.badge_ctrl_auth.setStyleSheet("font-size: 10px; font-weight: bold; color: #64748B; background-color: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 3px; padding: 2px 8px;")
 
         self.btn_pump1.setEnabled(controls_allowed)
         self.btn_pump2.setEnabled(controls_allowed)
-        self.btn_pump1.setText(("停止润滑泵 1" if self.plc.pump1_active else "启动润滑泵 1") if is_cn else ("Deactivate Pump 1" if self.plc.pump1_active else "Activate Pump 1"))
-        self.btn_pump2.setText(("停止润滑泵 2" if self.plc.pump2_active else "启动润滑泵 2") if is_cn else ("Deactivate Pump 2" if self.plc.pump2_active else "Activate Pump 2"))
+        self.btn_pump1.setText(tr("Deactivate Pump 1" if self.plc.pump1_active else "Activate Pump 1", self.current_lang))
+        self.btn_pump2.setText(tr("Deactivate Pump 2" if self.plc.pump2_active else "Activate Pump 2", self.current_lang))
         self.led_pump1.set_state(self.plc.pump1_active, "green", "grey")
         self.led_pump2.set_state(self.plc.pump2_active, "green", "grey")
 
@@ -864,29 +866,38 @@ class ManualPage(QWidget):
             chk.setEnabled(controls_allowed)
 
         # 3. Update Login Status Badge
-        role_name = ("超级用户" if is_cn else "Super User") if is_super else ("已登录" if is_cn else "Logged In")
+        role_name = tr("Super User", self.current_lang) if is_super else tr("Logged In", self.current_lang)
         self.login_card.set_state(unlocked, role_name=role_name if unlocked else None)
 
         # 4. Mode Request prompt and button
-        if in_manual:
-            prompt = "手动模式运行中，可请求退出手动模式。" if is_cn else "Manual mode active. Ready to exit manual mode."
+        if not is_online:
+            self.grp_mode.set_state(
+                is_active=in_manual,
+                can_enter=False,
+                prompt_text=tr("PLC communication offline. Mode switch disabled.", self.current_lang),
+                badge_text=tr("🔒 Offline", self.current_lang),
+                badge_type="locked",
+                can_exit=False
+            )
+        elif in_manual:
+            prompt = tr("Manual mode active. Ready to exit manual mode.", self.current_lang)
             self.grp_mode.set_state(
                 is_active=True,
-                can_enter=True,
+                can_enter=False,
                 prompt_text=prompt,
-                badge_text="✔ 运行中" if is_cn else "✔ Active",
+                badge_text=tr("✔ Active", self.current_lang),
                 badge_type="ready",
                 can_exit=True
             )
         else:
             can_enter = (self.plc.blade_state == STATE_STOPPED) or is_super
             if can_enter:
-                prompt = ("超级用户已就绪，可直接进入手动模式。" if is_super else "变桨系统已就绪，可请求进入手动模式。") if is_cn else ("Super User active. Ready to enter manual mode." if is_super else "Pitch System is ready to enter manual mode.")
-                badge_text = ("✔ 超级权限" if is_super else "✔ 具备准入条件") if is_cn else ("✔ Super Access" if is_super else "✔ Ready to Enter")
+                prompt = tr("Super User active. Ready to enter manual mode." if is_super else "Pitch System is ready to enter manual mode.", self.current_lang)
+                badge_text = tr("✔ Super Access" if is_super else "✔ Ready to Enter", self.current_lang)
                 badge_type = "ready"
             else:
-                prompt = "PAC 必须处于 STOPPED 状态方可进入手动模式。" if is_cn else "PAC must be STOPPED to enter manual mode."
-                badge_text = "🔒 需处于已停止" if is_cn else "🔒 Need Stopped"
+                prompt = tr("PAC must be STOPPED to enter manual mode.", self.current_lang)
+                badge_text = tr("🔒 Need Stopped", self.current_lang)
                 badge_type = "locked"
             self.grp_mode.set_state(
                 is_active=False,
@@ -905,16 +916,15 @@ class ManualPage(QWidget):
         if 0 <= self.plc.selected_blade_idx < len(self.chk_blades):
             self.chk_blades[self.plc.selected_blade_idx].setChecked(True)
 
-        # Update Pitch Lock Toggle Button
-        is_engaged = cur_blade.pitch_lock_engaged
-        is_lock_pressed = not is_engaged  # Released is the pressed/active state
+        # Update Pitch Lock Toggle Button (HMI control command, NOT hardware status feedback)
+        is_disengaged = self.plc.manual_pitch_lock_disengaged
+        is_lock_pressed = is_disengaged  # Released is the pressed/active state
         self.btn_pitch_lock.blockSignals(True)
         self.btn_pitch_lock.setChecked(is_lock_pressed)
         self.btn_pitch_lock.blockSignals(False)
 
-        lock_text_en = "Engaged" if is_engaged else "Released"
-        lock_text_cn = "已投入" if is_engaged else "已脱开"
-        self.btn_pitch_lock.setText(lock_text_cn if is_cn else lock_text_en)
+        lock_text_en = "Released" if is_disengaged else "Engaged"
+        self.btn_pitch_lock.setText(tr(lock_text_en, self.current_lang))
         self.btn_pitch_lock.setStyleSheet(self._style_industrial_toggle_btn(is_lock_pressed))
 
         # Update Fast/Slow Speed Toggle Button
@@ -925,8 +935,7 @@ class ManualPage(QWidget):
         self.btn_speed_mode.blockSignals(False)
 
         spd_mode_en = "Fast Speed\nSelected" if is_fast else "Slow Speed\nSelected"
-        spd_mode_cn = "快速模式\n(已选中)" if is_fast else "慢速模式\n(已选中)"
-        self.btn_speed_mode.setText(spd_mode_cn if is_cn else spd_mode_en)
+        self.btn_speed_mode.setText(tr(spd_mode_en, self.current_lang))
         self.btn_speed_mode.setStyleSheet(self._style_industrial_toggle_btn(is_speed_pressed))
 
         # Auto-sync fast/slow speed inputs if user is not actively typing
@@ -956,50 +965,22 @@ class ManualPage(QWidget):
                 if not self._user_edited_grds[i] and not edit.hasFocus():
                     edit.setText(str(b.grd_current))
 
-    def handle_login_logout(self):
-        if self.plc.manual_logged_in or getattr(self.plc, "is_super_user", False):
-            self.plc.manual_logged_in = False
-            self.plc.is_super_user = False
-            self.edit_password.clear()
-        else:
-            pwd = self.edit_password.text().strip()
-            if pwd in [PASSWORD_SUPER_USER, "super"]:
-                self.plc.manual_logged_in = True
-                self.plc.is_super_user = True
-            elif pwd in [PASSWORD_MANUAL_CALIB, "asdf"]:
-                self.plc.manual_logged_in = True
-                self.plc.is_super_user = False
-            else:
-                QMessageBox.warning(self, "Password Error", "Incorrect password!")
-        self.update_ui_state()
-
     def handle_request_mode(self):
-        if self.plc.blade_mode == MODE_PRODUCTION:
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.request_manual_mode()
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot switch operation mode!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
 
-            dlg = WarningModal(
-                "Warning - Manual Mode",
-                "WARNING: Entering the hub is NOT safe under any circumstances in Manual Mode!\n\nDo you want to proceed?",
-                self,
-                opcua_service=self.opcua_service
-            )
+        if self.plc.blade_mode == MODE_PRODUCTION:
+            title = tr("Warning - Manual Mode", self.current_lang)
+            msg = tr("WARNING: Entering the hub is NOT safe under any circumstances in Manual Mode!\n\nDo you want to proceed?", self.current_lang)
+            dlg = WarningModal(title, msg, self, opcua_service=None)
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                if self.opcua_service and self.plc.is_opcua_online:
-                    self.opcua_service.send_msgbox_ok()
-                ok, msg = self.plc.request_manual_mode()
-                if not ok:
-                    QMessageBox.warning(self, "Manual Mode", msg)
-            else:
-                if self.opcua_service and self.plc.is_opcua_online:
-                    self.opcua_service.send_msgbox_abort()
+                self.opcua_service.request_manual_mode()
         else:
-            ok, msg = self.plc.request_producing_mode()
-            if not ok:
-                QMessageBox.warning(self, "Producing Mode", msg)
-            else:
-                if self.opcua_service and self.plc.is_opcua_online:
-                    self.opcua_service.request_producing_mode()
+            self.opcua_service.request_producing_mode()
+        self.update_ui_state()
 
     def on_blade_selected(self, btn):
         idx = self.btn_group_blade.id(btn)
@@ -1007,7 +988,7 @@ class ManualPage(QWidget):
             return  # Already on this blade
         ok, msg = self.plc.select_blade(idx)
         if not ok:
-            title = "桨叶选择" if self.current_lang == "CN" else "Blade Selection"
+            title = tr("Blade Selection", self.current_lang)
             QMessageBox.warning(self, title, msg)
             if 0 <= self.plc.selected_blade_idx < len(self.radio_blades):
                 self.radio_blades[self.plc.selected_blade_idx].setChecked(True)
@@ -1017,21 +998,10 @@ class ManualPage(QWidget):
             self.update_ui_state()
 
     def toggle_pitch_lock(self):
-        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
-            is_cn = (self.current_lang == "CN")
-            title = "通信断开" if is_cn else "Communication Offline"
-            msg = (
-                "⚠️ 当前 PLC 通信已断开，无法切换变桨锁销动作！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot toggle pitch lock!\n\nPlease check OPC UA connection."
-            )
-            QMessageBox.warning(self, title, msg)
-            return
-
-        cur_blade = self.plc.blades[self.plc.selected_blade_idx]
-        target_disengaged = cur_blade.pitch_lock_engaged  # If currently engaged, we want to disengage (True)
-        self.opcua_service.set_pitch_lock(target_disengaged)
-        self.plc.toggle_pitch_lock()
+        new_state = self.plc.toggle_pitch_lock()
+        if self.opcua_service and getattr(self.plc, "is_opcua_online", False):
+            self.opcua_service.set_pitch_lock(new_state)
+        self.update_ui_state()
 
     def toggle_speed_mode(self):
         if self.plc.manual_speed_mode == "FAST":
@@ -1043,16 +1013,18 @@ class ManualPage(QWidget):
         self.update_ui_state()
 
     def toggle_pump(self, pump_no):
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot toggle lubrication pump!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
         if pump_no == 1:
             target = not self.plc.pump1_active
-            self.plc.pump1_active = target
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.set_lubrication_pump(1, target)
+            self.opcua_service.set_lubrication_pump(1, target)
         else:
             target = not self.plc.pump2_active
-            self.plc.pump2_active = target
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.set_lubrication_pump(2, target)
+            self.opcua_service.set_lubrication_pump(2, target)
         self.update_ui_state()
 
     def on_pos_text_changed(self, text):
@@ -1210,6 +1182,18 @@ class ManualPage(QWidget):
         if self.opcua_service and self.plc.is_opcua_online:
             self.opcua_service.set_move_fine(False)
 
+    def _safety_stop_motion(self):
+        """Safety release on focus loss or tab hide to avoid runaway blade pitching"""
+        if getattr(self.plc, "manual_moving_dir", 0) != 0:
+            self.plc.set_move_dir(0)
+            if self.opcua_service and getattr(self.plc, "is_opcua_online", False):
+                self.opcua_service.set_move_feather(False)
+                self.opcua_service.set_move_fine(False)
+
+    def hideEvent(self, event):
+        self._safety_stop_motion()
+        super().hideEvent(event)
+
     def apply_pos_calib(self):
         # 1. Pre-validate all 3 blades against [OFFSET_MIN_DEG, OFFSET_MAX_DEG]
         invalid_blades = []
@@ -1228,26 +1212,18 @@ class ManualPage(QWidget):
                 parsed_vals.append(None)
 
         if invalid_blades:
-            title = "输入范围错误" if self.current_lang == "CN" else "Input Range Error"
-            msg = (
-                f"偏置值必须在有效范围 [{OFFSET_MIN_DEG:.1f}°, {OFFSET_MAX_DEG:.1f}°] 内！\n"
-                f"超出范围项:\n" + "\n".join(invalid_blades)
-                if self.current_lang == "CN"
-                else f"Offset values must be within valid range [{OFFSET_MIN_DEG:.1f}°, {OFFSET_MAX_DEG:.1f}°]!\n"
-                     f"Out of range:\n" + "\n".join(invalid_blades)
+            title = tr("Input Range Error", self.current_lang)
+            items = "\n".join(invalid_blades)
+            msg = tr("Offset values must be within valid range [{min_deg:.1f}°, {max_deg:.1f}°]!\nOut of range:\n{items}", self.current_lang).format(
+                min_deg=OFFSET_MIN_DEG, max_deg=OFFSET_MAX_DEG, items=items
             )
             QMessageBox.warning(self, title, msg)
             return
 
         # Check online communication status FIRST!
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
-            title = "通信断开" if is_cn else "Communication Offline"
-            msg = (
-                "⚠️ 当前 PLC 通信已断开，无法下发变桨位置标定参数至控制器！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot apply pitch position calibration to controller!\n\nPlease check OPC UA connection."
-            )
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot apply pitch position calibration to controller!\n\nPlease check OPC UA connection.", self.current_lang)
             QMessageBox.warning(self, title, msg)
             return
 
@@ -1264,8 +1240,8 @@ class ManualPage(QWidget):
         # Pulse Common.hmi.buttons.applyPPCSelection = 1 to trigger PLC handshake
         self.opcua_service.apply_pitch_position_calib()
 
-        title = "标定成功" if is_cn else "Calibration"
-        msg = "变桨位置标定参数已成功下发至 PLC！" if is_cn else "Pitch Position Calibration applied successfully to PLC!"
+        title = tr("Calibration Success", self.current_lang)
+        msg = tr("Pitch Position Calibration applied successfully to PLC!", self.current_lang)
         QMessageBox.information(self, title, msg)
 
     def apply_grd_calib(self):
@@ -1275,7 +1251,7 @@ class ManualPage(QWidget):
         for i, edit in enumerate(self.grd_new_edits):
             txt = edit.text().strip()
             blade_letter = chr(65 + i)
-            blade_name = f"Blade {blade_letter}" if self.current_lang == "EN" else f"叶片 {blade_letter}"
+            blade_name = f"{tr('Blade', self.current_lang)} {blade_letter}"
             try:
                 val = int(txt)
                 if not (GRD_MIN_VALUE <= val <= GRD_MAX_VALUE):
@@ -1286,26 +1262,18 @@ class ManualPage(QWidget):
                 parsed_vals.append(None)
 
         if invalid_blades:
-            title = "输入范围错误" if self.current_lang == "CN" else "Input Range Error"
+            title = tr("Input Range Error", self.current_lang)
             msg = (
-                f"GRD 值必须在有效范围 [{GRD_MIN_VALUE}, {GRD_MAX_VALUE}] 内！\n"
-                f"超出范围项:\n" + "\n".join(invalid_blades)
-                if self.current_lang == "CN"
-                else f"GRD values must be within valid range [{GRD_MIN_VALUE}, {GRD_MAX_VALUE}]!\n"
-                     f"Out of range:\n" + "\n".join(invalid_blades)
+                f"{tr('GRD Valid Range', self.current_lang)}: [{GRD_MIN_VALUE}, {GRD_MAX_VALUE}]!\n"
+                f"Out of range:\n" + "\n".join(invalid_blades)
             )
             QMessageBox.warning(self, title, msg)
             return
 
         # Check online communication status FIRST!
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
-            title = "通信断开" if is_cn else "Communication Offline"
-            msg = (
-                "⚠️ 当前 PLC 通信已断开，无法下发 GRD 标定参数至控制器！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot apply GRD calibration to controller!\n\nPlease check OPC UA connection."
-            )
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot apply GRD calibration to controller!\n\nPlease check OPC UA connection.", self.current_lang)
             QMessageBox.warning(self, title, msg)
             return
 
@@ -1323,6 +1291,6 @@ class ManualPage(QWidget):
         # Pulse Common.hmi.buttons.applyGRDSelection = 1 to trigger PLC handshake
         self.opcua_service.apply_grd_calib()
 
-        title = "标定成功" if is_cn else "Calibration"
-        msg = "GRD 标定参数已成功下发至 PLC！" if is_cn else "GRD Calibration applied successfully to PLC!"
+        title = tr("Calibration Success", self.current_lang)
+        msg = tr("GRD Calibration applied successfully to PLC!", self.current_lang)
         QMessageBox.information(self, title, msg)

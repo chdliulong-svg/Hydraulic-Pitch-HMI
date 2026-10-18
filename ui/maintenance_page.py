@@ -14,57 +14,17 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt
 from config import (
-    MODE_MAINTENANCE, STATE_ABORTED, PASSWORD_MAINT_LOGIN, PASSWORD_SUPER_USER
+    MODE_MAINTENANCE, STATE_ABORTED,
+    ROLE_NOT_LOGGED_IN
 )
 from utils.widgets import WarningModal
+from utils.i18n import tr
 from ui.login_card import LoginCard
-from ui.mode_card import ModeCard
+from ui.mode_card import ModeCard, PillBadge
 
 # Proportional valve spool command physical limits (%)
 PROP_VALVE_MIN_CMD = -100.0
 PROP_VALVE_MAX_CMD = 100.0
-
-
-class PillBadge(QLabel):
-    """Status badge for card headers"""
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.setFixedHeight(22)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.set_state("locked", text)
-
-    def set_state(self, state_type, text):
-        self.setText(text)
-        if state_type == "ready":
-            self.setStyleSheet("""
-                background-color: #DEF7EC;
-                color: #03543F;
-                border: 1px solid #31C48D;
-                border-radius: 11px;
-                padding: 1px 10px;
-                font-size: 10px;
-                font-weight: bold;
-            """)
-        elif state_type == "unlocked":
-            self.setStyleSheet("""
-                background-color: #E1EFFE;
-                color: #1E429F;
-                border: 1px solid #76A9FA;
-                border-radius: 11px;
-                padding: 1px 8px;
-                font-size: 10px;
-                font-weight: bold;
-            """)
-        else:  # locked / warning
-            self.setStyleSheet("""
-                background-color: #FEF2F2;
-                color: #991B1B;
-                border: 1px solid #F87171;
-                border-radius: 11px;
-                padding: 1px 8px;
-                font-size: 10px;
-                font-weight: bold;
-            """)
 
 
 class MaintenancePage(QWidget):
@@ -76,6 +36,7 @@ class MaintenancePage(QWidget):
         self.init_ui()
         self.retranslate_ui(self.current_lang)
         self.plc.state_changed.connect(self.update_ui_state)
+        self.plc.auth_changed.connect(self._on_auth_changed)
         self.update_ui_state()
 
     def init_ui(self):
@@ -175,23 +136,23 @@ class MaintenancePage(QWidget):
     # Groupbox 1: HPU
     # =========================================================================
     def _create_hpu_group(self):
-        grp = QGroupBox("液压动力单元 (HPU)")
+        grp = QGroupBox("HPU Hydraulic Power Unit")
         grp.setFixedHeight(68)
         layout = QHBoxLayout(grp)
         layout.setContentsMargins(14, 2, 14, 6)
         layout.setSpacing(8)
 
-        self.chk_hpu_pressure = QCheckBox("请求 HPU 泵站建压")
+        self.chk_hpu_pressure = QCheckBox("Request HPU Buildup")
         self.chk_hpu_pressure.setStyleSheet("font-weight: 500;")
 
-        self.badge_hpu = PillBadge("🔒 需维护模式")
+        self.badge_hpu = PillBadge("🔒 Require Maint.")
 
-        self.btn_hpu_reset = QPushButton("重置")
+        self.btn_hpu_reset = QPushButton("Reset")
         self.btn_hpu_reset.setFixedSize(68, 28)
         self.btn_hpu_reset.setStyleSheet(self._style_reset_btn())
         self.btn_hpu_reset.clicked.connect(self.reset_hpu)
 
-        self.btn_hpu_apply = QPushButton("应用")
+        self.btn_hpu_apply = QPushButton("Apply")
         self.btn_hpu_apply.setFixedSize(72, 28)
         self.btn_hpu_apply.setStyleSheet(self._style_apply_btn())
         self.btn_hpu_apply.clicked.connect(self.apply_hpu)
@@ -209,23 +170,23 @@ class MaintenancePage(QWidget):
     # Groupbox 2: Lubrication
     # =========================================================================
     def _create_lubrication_group(self):
-        grp = QGroupBox("润滑系统测试")
+        grp = QGroupBox("Lubrication System Test")
         grp.setFixedHeight(68)
         layout = QHBoxLayout(grp)
         layout.setContentsMargins(14, 2, 14, 6)
         layout.setSpacing(8)
 
-        self.chk_lub1 = QCheckBox("润滑泵 1")
-        self.chk_lub2 = QCheckBox("润滑泵 2")
+        self.chk_lub1 = QCheckBox("Lub. Pump 1")
+        self.chk_lub2 = QCheckBox("Lub. Pump 2")
 
-        self.badge_lub = PillBadge("🔒 需维护模式")
+        self.badge_lub = PillBadge("🔒 Require Maint.")
 
-        self.btn_lub_reset = QPushButton("重置")
+        self.btn_lub_reset = QPushButton("Reset")
         self.btn_lub_reset.setFixedSize(68, 28)
         self.btn_lub_reset.setStyleSheet(self._style_reset_btn())
         self.btn_lub_reset.clicked.connect(self.reset_lub)
 
-        self.btn_lub_apply = QPushButton("应用")
+        self.btn_lub_apply = QPushButton("Apply")
         self.btn_lub_apply.setFixedSize(72, 28)
         self.btn_lub_apply.setStyleSheet(self._style_apply_btn())
         self.btn_lub_apply.clicked.connect(self.apply_lub)
@@ -245,17 +206,17 @@ class MaintenancePage(QWidget):
     # Groupbox 3: PAC Valve Matrix & Proportional Valve Section
     # =========================================================================
     def _create_pac_valve_group(self):
-        grp = QGroupBox("PAC 阀组与比例阀测试")
+        grp = QGroupBox("PAC Valve Actuation & Prop. Control")
         layout = QVBoxLayout(grp)
         layout.setContentsMargins(14, 6, 14, 8)
         layout.setSpacing(6)
 
         # Top Bar
         top_bar = QHBoxLayout()
-        self.lbl_pac_desc = QLabel("独立开关阀动作测试 与 比例阀 102A 连续调节")
+        self.lbl_pac_desc = QLabel("Valve actuation & Prop. Valve 102A control")
         self.lbl_pac_desc.setTextFormat(Qt.TextFormat.PlainText)
         self.lbl_pac_desc.setStyleSheet("font-size: 11px; color: #64748B;")
-        self.badge_pac = PillBadge("🔒 需维护模式并登录")
+        self.badge_pac = PillBadge("🔒 Require Maint. & Login")
         top_bar.addWidget(self.lbl_pac_desc)
         top_bar.addStretch()
         top_bar.addWidget(self.badge_pac)
@@ -287,7 +248,7 @@ class MaintenancePage(QWidget):
         grid_valves.setColumnMinimumWidth(3, 26)  # C
 
         # Table Headers
-        self.lbl_hdr_v_name = QLabel("阀门名称")
+        self.lbl_hdr_v_name = QLabel("Valve Name")
         self.lbl_hdr_v_name.setFixedHeight(28)
         self.lbl_hdr_v_name.setStyleSheet("font-size: 11px; font-weight: bold; color: #475569;")
         self.lbl_hdr_va = QLabel("A")
@@ -309,23 +270,23 @@ class MaintenancePage(QWidget):
         grid_valves.addWidget(self.lbl_hdr_vc, 0, 3)
 
         valve_defs = [
-            ("Valve 132 Pitch Lock", "132 变桨锁紧阀 (Pitch Lock)", "v132"),
-            ("Valve 130 Pitch Lock", "130 变桨锁止阀 (Pitch Lock)", "v130"),
-            ("Valve 120 EMF", "120 应急顺桨阀 (EMF)", "v120"),
-            ("Valve 103 EMF", "103 应急顺桨阀 (EMF)", "v103"),
-            ("Valve 119A Cut Off 1", "119A 截止阀 1 (Cut Off 1)", "v119a"),
-            ("Valve 119B Cut Off 2", "119B 截止阀 2 (Cut Off 2)", "v119b"),
-            ("Valve 109 Cut Off P", "109 压力截止阀 P (Cut Off P)", "v109"),
-            ("Valve 116 Dump", "116 主卸荷阀 (Dump)", "v116")
+            ("Valve 132 Pitch Lock", "v132"),
+            ("Valve 130 Pitch Lock", "v130"),
+            ("Valve 120 EMF", "v120"),
+            ("Valve 103 EMF", "v103"),
+            ("Valve 119A Cut Off 1", "v119a"),
+            ("Valve 119B Cut Off 2", "v119b"),
+            ("Valve 109 Cut Off P", "v109"),
+            ("Valve 116 Dump", "v116")
         ]
 
         self.valve_labels = []
         self.valve_checkboxes = []  # [(v_key, [chkA, chkB, chkC])]
-        for row, (v_en, v_cn, v_key) in enumerate(valve_defs, start=1):
-            lbl_v = QLabel(v_cn)
+        for row, (v_en, v_key) in enumerate(valve_defs, start=1):
+            lbl_v = QLabel(v_en)
             lbl_v.setFixedHeight(32)
             lbl_v.setStyleSheet("font-size: 10px; font-weight: 500; color: #334155;")
-            self.valve_labels.append((lbl_v, v_en, v_cn))
+            self.valve_labels.append((lbl_v, v_en))
             grid_valves.addWidget(lbl_v, row, 0)
 
             row_chks = []
@@ -354,7 +315,7 @@ class MaintenancePage(QWidget):
         fr_layout.setSpacing(6)
 
         # Prop Valve Header
-        self.lbl_hdr_prop = QLabel("比例阀 102A (-100% ~ +100%)")
+        self.lbl_hdr_prop = QLabel("Prop. Valve 102A (-100% ~ +100%)")
         self.lbl_hdr_prop.setStyleSheet("font-size: 11px; font-weight: bold; color: #1E293B;")
         fr_layout.addWidget(self.lbl_hdr_prop)
 
@@ -369,13 +330,13 @@ class MaintenancePage(QWidget):
         prop_grid.setColumnStretch(1, 1)  # Proportional slider takes available width
 
         for i, b_name in enumerate(["A", "B", "C"]):
-            lbl_p = QLabel(f"叶片 {b_name} 比例阀:")
+            lbl_p = QLabel(f"Blade {b_name} (102A):")
             lbl_p.setFixedWidth(96)
             lbl_p.setStyleSheet("font-size: 11px; font-weight: 500; color: #334155;")
-            self.prop_labels.append((lbl_p, f"Blade {b_name} (102A):", f"叶片 {b_name} 比例阀:"))
+            self.prop_labels.append((lbl_p, f"Blade {b_name} (102A):"))
 
             slider = QSlider(Qt.Orientation.Horizontal)
-            slider.setRange(int(PROP_VALVE_MIN_CMD), int(PROP_VALVE_MAX_CMD))
+            slider.setRange(int(PROP_VALVE_MIN_CMD * 10), int(PROP_VALVE_MAX_CMD * 10))
             slider.setValue(0)
             slider.setStyleSheet("""
                 QSlider::groove:horizontal {
@@ -404,7 +365,7 @@ class MaintenancePage(QWidget):
             edit.setAlignment(Qt.AlignmentFlag.AlignCenter)
             edit.setStyleSheet("font-weight: bold;")
 
-            slider.valueChanged.connect(lambda v, e=edit: e.setText(f"{v:.1f} %"))
+            slider.valueChanged.connect(lambda v, e=edit: e.setText(f"{v / 10.0:.1f} %"))
 
             def make_edit_handler(s, e):
                 def on_edit_finished():
@@ -412,10 +373,12 @@ class MaintenancePage(QWidget):
                     try:
                         val = float(txt)
                         val = max(PROP_VALVE_MIN_CMD, min(PROP_VALVE_MAX_CMD, val))
-                        s.setValue(int(round(val)))
+                        s.blockSignals(True)
+                        s.setValue(int(round(val * 10)))
+                        s.blockSignals(False)
                         e.setText(f"{val:.1f} %")
                     except ValueError:
-                        e.setText(f"{s.value():.1f} %")
+                        e.setText(f"{s.value() / 10.0:.1f} %")
                 return on_edit_finished
 
             edit.editingFinished.connect(make_edit_handler(slider, edit))
@@ -435,7 +398,7 @@ class MaintenancePage(QWidget):
         spool_box.setStyleSheet("background-color: #FFFFFF; border: 1px dashed #CBD5E1; border-radius: 4px;")
         sb_layout = QHBoxLayout(spool_box)
         sb_layout.setContentsMargins(8, 4, 8, 4)
-        self.lbl_spool_title = QLabel("阀芯实时反馈:")
+        self.lbl_spool_title = QLabel("Spool FB:")
         self.lbl_spool_title.setStyleSheet("font-size: 10px; font-weight: bold; color: #64748B;")
         sb_layout.addWidget(self.lbl_spool_title)
 
@@ -450,7 +413,7 @@ class MaintenancePage(QWidget):
         # Diagnostic notice deck
         fr_layout.addStretch()
         self.lbl_pac_notice = QLabel(
-            "提示：修改阀门复选框或比例阀开度后，点击右下角【应用更改】下发至 PLC。"
+            "Notice: After setting valves or proportional command, click 'Apply Changes' to transmit to PLC."
         )
         self.lbl_pac_notice.setWordWrap(True)
         self.lbl_pac_notice.setStyleSheet("font-size: 10px; color: #64748B; line-height: 14px;")
@@ -462,12 +425,12 @@ class MaintenancePage(QWidget):
         # PAC Bottom Action Buttons (Aligned to right edge)
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self.btn_pac_reset = QPushButton("重置")
+        self.btn_pac_reset = QPushButton("Reset")
         self.btn_pac_reset.setFixedSize(75, 28)
         self.btn_pac_reset.setStyleSheet(self._style_reset_btn())
         self.btn_pac_reset.clicked.connect(self.reset_pac)
 
-        self.btn_pac_apply = QPushButton("应用更改")
+        self.btn_pac_apply = QPushButton("Apply Changes")
         self.btn_pac_apply.setFixedSize(105, 28)
         self.btn_pac_apply.setStyleSheet(self._style_apply_btn())
         self.btn_pac_apply.clicked.connect(self.apply_pac)
@@ -543,53 +506,46 @@ class MaintenancePage(QWidget):
     # =========================================================================
     def retranslate_ui(self, lang="EN"):
         self.current_lang = lang
-        is_cn = (lang == "CN")
 
         # 1. GroupBox Titles
-        self.grp_hpu.setTitle("液压动力单元 (HPU)" if is_cn else "HPU Hydraulic Power Unit")
-        self.grp_lub.setTitle("润滑系统测试" if is_cn else "Lubrication System Test")
-        self.grp_pac.setTitle("PAC 阀组与比例阀测试" if is_cn else "PAC Valve Actuation && Prop. Control")
-        self.grp_login.setTitle("登录" if is_cn else "Login")
+        self.grp_hpu.setTitle(tr("HPU Hydraulic Power Unit", lang))
+        self.grp_lub.setTitle(tr("Lubrication System Test", lang))
+        self.grp_pac.setTitle(tr("PAC Valve Actuation & Prop. Control", lang))
+        self.grp_login.setTitle(tr("Login", lang))
         self.grp_mode.retranslate_ui(lang)
 
         # 2. HPU & Lub Labels & Buttons
-        self.chk_hpu_pressure.setText("请求 HPU 泵站建压" if is_cn else "Request HPU Buildup")
-        self.chk_lub1.setText("润滑泵 1" if is_cn else "Lub. Pump 1")
-        self.chk_lub2.setText("润滑泵 2" if is_cn else "Lub. Pump 2")
+        self.chk_hpu_pressure.setText(tr("Request HPU Buildup", lang))
+        self.chk_lub1.setText(tr("Lub. Pump 1", lang))
+        self.chk_lub2.setText(tr("Lub. Pump 2", lang))
 
-        self.btn_hpu_reset.setText("重置" if is_cn else "Reset")
-        self.btn_hpu_apply.setText("应用" if is_cn else "Apply")
-        self.btn_lub_reset.setText("重置" if is_cn else "Reset")
-        self.btn_lub_apply.setText("应用" if is_cn else "Apply")
-        self.btn_pac_reset.setText("重置" if is_cn else "Reset")
-        self.btn_pac_apply.setText("应用更改" if is_cn else "Apply Changes")
+        self.btn_hpu_reset.setText(tr("Reset", lang))
+        self.btn_hpu_apply.setText(tr("Apply", lang))
+        self.btn_lub_reset.setText(tr("Reset", lang))
+        self.btn_lub_apply.setText(tr("Apply", lang))
+        self.btn_pac_reset.setText(tr("Reset", lang))
+        self.btn_pac_apply.setText(tr("Apply Changes", lang))
 
         # 3. PAC Valve Matrix Headers & Names
-        self.lbl_pac_desc.setText(
-            "开关阀动作测试 与 比例阀 102A 连续调节" if is_cn
-            else "Valve actuation & Prop. Valve 102A control"
-        )
-        self.lbl_hdr_v_name.setText("阀门名称" if is_cn else "Valve Name")
+        self.lbl_pac_desc.setText(tr("Valve actuation & Prop. Valve 102A control", lang))
+        self.lbl_hdr_v_name.setText(tr("Valve Name", lang))
         self.lbl_hdr_va.setText("A")
         self.lbl_hdr_vb.setText("B")
         self.lbl_hdr_vc.setText("C")
 
-        for lbl, v_en, v_cn in self.valve_labels:
-            lbl.setText(v_cn if is_cn else v_en)
+        for lbl, v_en in self.valve_labels:
+            lbl.setText(tr(v_en, lang))
 
         # 4. Proportional Valve
-        self.lbl_hdr_prop.setText("比例阀 102A (-100% ~ +100%)" if is_cn else "Prop. Valve 102A (-100% ~ +100%)")
-        for lbl_p, en_t, cn_t in self.prop_labels:
-            lbl_p.setText(cn_t if is_cn else en_t)
-        self.lbl_spool_title.setText("阀芯反馈:" if is_cn else "Spool FB:")
-        self.lbl_pac_notice.setText(
-            "提示：修改阀门复选框或比例阀开度后，点击右下角【应用更改】下发至 PLC。" if is_cn
-            else "Notice: After setting valves or proportional command, click 'Apply Changes' to transmit to PLC."
-        )
+        self.lbl_hdr_prop.setText(tr("Prop. Valve 102A (-100% ~ +100%)", lang))
+        for lbl_p, en_t in self.prop_labels:
+            lbl_p.setText(tr(en_t, lang))
+        self.lbl_spool_title.setText(tr("Spool FB:", lang))
+        self.lbl_pac_notice.setText(tr("Notice: After setting valves or proportional command, click 'Apply Changes' to transmit to PLC.", lang))
 
         # 5. Login & Mode
         self.login_card.retranslate_ui(lang)
-        self.lbl_mode_state_hint.setText("准入状态:" if is_cn else "Interlock:")
+        self.lbl_mode_state_hint.setText(tr("Interlock:", lang))
         self.update_ui_state()
 
     # =========================================================================
@@ -600,49 +556,62 @@ class MaintenancePage(QWidget):
         logged_in = self.plc.maint_logged_in
         is_super = getattr(self.plc, "is_super_user", False)
         can_req_maint = (self.plc.blade_state == STATE_ABORTED) or is_super
-        is_cn = (self.current_lang == "CN")
 
         # 1. Update Login Card
-        role_name = ("超级用户" if is_cn else "Super User") if is_super else ("维护" if is_cn else "Maintenance")
+        role_name = tr("Super User", self.current_lang) if is_super else tr("Maintenance", self.current_lang)
         self.login_card.set_state(logged_in, role_name=role_name if logged_in else None)
 
-        if in_maint:
-            self.badge_hpu.set_state("ready", "✔ 维护中" if is_cn else "✔ Active")
-            self.badge_lub.set_state("ready", "✔ 维护中" if is_cn else "✔ Active")
-            self.badge_pac.set_state("ready", "✔ 允许动作测试" if is_cn else "✔ Ready to Test")
+        is_online = getattr(self.plc, "is_opcua_online", False)
 
-            prompt = "当前处于维护模式，允许进行开关阀与动作测试。" if is_cn else "Active in Maintenance Mode. Testing enabled."
+        if not is_online:
+            self.badge_hpu.set_state("locked", tr("🔒 Offline", self.current_lang))
+            self.badge_lub.set_state("locked", tr("🔒 Offline", self.current_lang))
+            self.badge_pac.set_state("locked", tr("🔒 Offline", self.current_lang))
+            self.grp_mode.set_state(
+                is_active=in_maint,
+                can_enter=False,
+                prompt_text=tr("PLC communication offline. Mode switch disabled.", self.current_lang),
+                badge_text=tr("🔒 Offline", self.current_lang),
+                badge_type="locked",
+                can_exit=False
+            )
+        elif in_maint:
+            self.badge_hpu.set_state("ready", tr("✔ In Maintenance", self.current_lang))
+            self.badge_lub.set_state("ready", tr("✔ In Maintenance", self.current_lang))
+            self.badge_pac.set_state("ready", tr("✔ Ready to Test", self.current_lang))
+
+            prompt = tr("Active in Maintenance Mode. Testing enabled.", self.current_lang)
             self.grp_mode.set_state(
                 is_active=True,
-                can_enter=True,
+                can_enter=False,
                 prompt_text=prompt,
-                badge_text="✔ 运行中" if is_cn else "✔ Active",
+                badge_text=tr("✔ Active", self.current_lang),
                 badge_type="ready",
                 can_exit=True
             )
         else:
             if is_super:
-                self.badge_hpu.set_state("ready", "✔ 超级权限" if is_cn else "✔ Super Access")
-                self.badge_lub.set_state("ready", "✔ 超级权限" if is_cn else "✔ Super Access")
-                self.badge_pac.set_state("ready", "✔ 超级权限" if is_cn else "✔ Super Access")
-                prompt = "超级用户已登录，已解除所有准入与控制限制。" if is_cn else "Super User active. All restrictions lifted."
-                badge_text = "✔ 超级权限" if is_cn else "✔ Super Access"
+                self.badge_hpu.set_state("ready", tr("✔ Super Access", self.current_lang))
+                self.badge_lub.set_state("ready", tr("✔ Super Access", self.current_lang))
+                self.badge_pac.set_state("ready", tr("✔ Super Access", self.current_lang))
+                prompt = tr("Super User active. All restrictions lifted.", self.current_lang)
+                badge_text = tr("✔ Super Access", self.current_lang)
                 badge_type = "ready"
             else:
-                self.badge_hpu.set_state("locked", "🔒 需维护模式" if is_cn else "🔒 Require Maint.")
-                self.badge_lub.set_state("locked", "🔒 需维护模式" if is_cn else "🔒 Require Maint.")
-                self.badge_pac.set_state("locked", "🔒 需维护模式并登录" if is_cn else "🔒 Require Maint. & Login")
+                self.badge_hpu.set_state("locked", tr("🔒 Require Maint.", self.current_lang))
+                self.badge_lub.set_state("locked", tr("🔒 Require Maint.", self.current_lang))
+                self.badge_pac.set_state("locked", tr("🔒 Require Maint. & Login", self.current_lang))
 
                 if can_req_maint:
-                    prompt = "前置条件已满足，可请求维护模式。" if is_cn else "Preconditions met. Ready to enter maintenance mode."
-                    badge_text = "✔ 具备准入条件" if is_cn else "✔ Ready to Enter"
+                    prompt = tr("Preconditions met. Ready to enter maintenance mode.", self.current_lang)
+                    badge_text = tr("✔ Ready to Enter", self.current_lang)
                     badge_type = "ready"
                 else:
                     if not logged_in:
-                        prompt = "需处于已中止 (Aborted) 状态且已登录维护权限。" if is_cn else "Must be in Aborted state and logged in."
+                        prompt = tr("Must be in Aborted state and logged in.", self.current_lang)
                     else:
-                        prompt = "系统需处于已中止 (Aborted) 状态方可进入。" if is_cn else "System must be in Aborted state to enter."
-                    badge_text = "🔒 需处于已中止" if is_cn else "🔒 Need Aborted"
+                        prompt = tr("System must be in Aborted state to enter.", self.current_lang)
+                    badge_text = tr("🔒 Need Aborted", self.current_lang)
                     badge_type = "locked"
 
             self.grp_mode.set_state(
@@ -654,7 +623,7 @@ class MaintenancePage(QWidget):
             )
 
         # 2. Controls Enabled State
-        controls_allowed = (in_maint and logged_in) or is_super
+        controls_allowed = ((in_maint and logged_in) or is_super) and is_online
 
         self.chk_hpu_pressure.setEnabled(controls_allowed)
         self.btn_hpu_apply.setEnabled(controls_allowed)
@@ -686,76 +655,57 @@ class MaintenancePage(QWidget):
     # Action Handlers
     # =========================================================================
     def _handle_maint_login(self, pwd):
-        if pwd in [PASSWORD_SUPER_USER, "super"]:
-            self.plc.maint_logged_in = True
-            self.plc.is_super_user = True
-            if self.opcua_service and self.plc.is_opcua_online:
+        ok, msg, role = self.plc.authenticate(pwd)
+        if ok:
+            if self.opcua_service and getattr(self.plc, "is_opcua_online", False):
                 self.opcua_service.login_maintenance()
             return True, ""
-        elif pwd in [PASSWORD_MAINT_LOGIN, "asdf"]:
-            self.plc.maint_logged_in = True
-            self.plc.is_super_user = False
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.login_maintenance()
-            return True, ""
-        return False, "维护模式密码不正确！" if self.current_lang == "CN" else "Incorrect password for Maintenance Mode!"
+        return False, tr("Incorrect password for Maintenance Mode!", self.current_lang)
 
     def _handle_maint_logout(self):
-        self.plc.maint_logged_in = False
-        self.plc.is_super_user = False
+        self.plc.logout()
+
+    def _on_auth_changed(self, role):
+        is_logged = (role != ROLE_NOT_LOGGED_IN)
+        self.login_card.set_state(is_logged, role if is_logged else None)
+        self.update_ui_state()
 
     def handle_login_logout(self):
         self.login_card.handle_login_logout()
 
     def handle_mode_action(self):
-        is_cn = (self.current_lang == "CN")
+        if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
+            title = tr("Communication Offline", self.current_lang)
+            msg = tr("⚠️ PLC communication is offline. Cannot switch operation mode!\n\nPlease check OPC UA connection.", self.current_lang)
+            QMessageBox.warning(self, title, msg)
+            return
+
         if self.plc.blade_mode != MODE_MAINTENANCE:
             # 1. 前置准入条件检查：变桨系统必须处于 已中止 (Aborted) 状态（超级用户除外）
             can_enter = (self.plc.blade_state == STATE_ABORTED) or getattr(self.plc, "is_super_user", False)
             if not can_enter:
-                title = "准入限制" if is_cn else "Interlock Restriction"
-                msg = (
-                    "系统当前未处于 已中止 (Aborted) 状态！\n请先中止变桨系统，然后再请求进入维护模式。"
-                    if is_cn else
-                    "System is not in ABORTED state!\nPlease abort the pitch system before requesting Maintenance Mode."
-                )
+                title = tr("Interlock Restriction", self.current_lang)
+                msg = tr("System is not in ABORTED state!\nPlease abort the pitch system before requesting Maintenance Mode.", self.current_lang)
                 QMessageBox.warning(self, title, msg)
                 return
 
             # 2. 上位机安全警告确认弹窗（双语）
-            title = "安全警告 - 维护模式" if is_cn else "Warning - Maintenance Mode"
-            msg = (
-                "⚠️ 严重警告：\n在维护模式下，任何情况下进入轮毂都是不安全的！\n\n是否确认请求进入维护模式？"
-                if is_cn else
-                "WARNING: Entering the hub is NOT safe under any circumstances in Maintenance Mode!\n\nDo you want to proceed?"
-            )
+            title = tr("Warning - Maintenance Mode", self.current_lang)
+            msg = tr("WARNING: Entering the hub is NOT safe under any circumstances in Maintenance Mode!\n\nDo you want to proceed?", self.current_lang)
 
-            dlg = WarningModal(title, msg, self, opcua_service=self.opcua_service)
+            dlg = WarningModal(title, msg, self, opcua_service=None)
             if dlg.exec() == QDialog.DialogCode.Accepted:
-                if self.opcua_service and self.plc.is_opcua_online:
-                    self.opcua_service.request_maintenance_mode()
-                    self.opcua_service.send_msgbox_ok()
-                ok, err = self.plc.request_maintenance_mode()
-                if not ok:
-                    QMessageBox.warning(self, "维护模式" if is_cn else "Maintenance Mode", err)
-            else:
-                if self.opcua_service and self.plc.is_opcua_online:
-                    self.opcua_service.send_msgbox_abort()
+                self.opcua_service.request_maintenance_mode()
         else:
-            self.plc.exit_maintenance_mode()
-            if self.opcua_service and self.plc.is_opcua_online:
-                self.opcua_service.exit_maintenance_mode()
+            self.opcua_service.exit_maintenance_mode()
         self.update_ui_state()
 
     def apply_hpu(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法下发 HPU 动力单元设置！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot apply HPU settings!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot apply HPU settings!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 
@@ -764,20 +714,17 @@ class MaintenancePage(QWidget):
         self.opcua_service.apply_maint_hpu(req)
         QMessageBox.information(
             self,
-            "HPU 动力单元" if is_cn else "HPU",
-            "HPU 建压请求已成功下发至 PLC。" if is_cn else "HPU pressure request applied to PLC successfully."
+            tr("HPU", self.current_lang),
+            tr("HPU pressure request applied to PLC successfully.", self.current_lang)
         )
         self.update_ui_state()
 
     def reset_hpu(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法复位 HPU 动力单元！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot reset HPU settings!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot reset HPU settings!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 
@@ -787,14 +734,11 @@ class MaintenancePage(QWidget):
         self.update_ui_state()
 
     def apply_lub(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法下发润滑测试设置！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot apply lubrication settings!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot apply lubrication settings!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 
@@ -805,20 +749,17 @@ class MaintenancePage(QWidget):
         self.opcua_service.apply_maint_lub(p1, p2)
         QMessageBox.information(
             self,
-            "润滑系统" if is_cn else "Lubrication",
-            "润滑泵测试设置已成功下发至 PLC。" if is_cn else "Lubrication pump settings applied to PLC successfully."
+            tr("Lubrication", self.current_lang),
+            tr("Lubrication pump settings applied to PLC successfully.", self.current_lang)
         )
         self.update_ui_state()
 
     def reset_lub(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法复位润滑测试设置！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot reset lubrication settings!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot reset lubrication settings!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 
@@ -830,14 +771,11 @@ class MaintenancePage(QWidget):
         self.update_ui_state()
 
     def apply_pac(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法下发 PAC 阀门动作指令！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot apply PAC valve actions!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot apply PAC valve actions!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 
@@ -851,31 +789,25 @@ class MaintenancePage(QWidget):
                 valves_by_blade[b_idx][v_key] = is_chk
         spool_cmds = []
         for b_idx in range(3):
-            val = self.prop_sliders[b_idx].value()
+            val = self.prop_sliders[b_idx].value() / 10.0
             self.plc.blades[b_idx].prop_valve_cmd = val
-            # Simulate spool follow
-            self.plc.blades[b_idx].spool_pos_pct = float(val)
             spool_cmds.append(float(val))
 
         self.opcua_service.apply_maint_pac(valves_by_blade, spool_cmds)
 
         QMessageBox.information(
             self,
-            "PAC 阀门动作" if is_cn else "PAC Control",
-            "PAC 开关阀动作及比例阀指令已成功下发至 PLC！" if is_cn
-            else "PAC valve actuations and proportional commands applied to PLC successfully!"
+            tr("PAC Control", self.current_lang),
+            tr("PAC valve actuations and proportional commands applied to PLC successfully!", self.current_lang)
         )
         self.update_ui_state()
 
     def reset_pac(self):
-        is_cn = (self.current_lang == "CN")
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):
             QMessageBox.warning(
                 self,
-                "通信断开" if is_cn else "Communication Offline",
-                "⚠️ 当前 PLC 通信已断开，无法复位 PAC 阀门！\n\n请检查底层 OPC UA 通信连接。"
-                if is_cn else
-                "⚠️ PLC communication is offline. Cannot reset PAC valves!\n\nPlease check OPC UA connection."
+                tr("Communication Offline", self.current_lang),
+                tr("⚠️ PLC communication is offline. Cannot reset PAC valves!\n\nPlease check OPC UA connection.", self.current_lang)
             )
             return
 

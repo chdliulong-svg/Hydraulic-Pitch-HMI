@@ -149,7 +149,7 @@ class TelemetryCard(QFrame):
         self._current_row += 1
         return self
 
-    def add_led_row(self, key: str, label: str, color: str = "green", shape: str = "square", size: int = 14) -> 'TelemetryCard':
+    def add_led_row(self, key: str, label: str, color: str = "grey", shape: str = "square", size: int = 14) -> 'TelemetryCard':
         """
         添加 LED 状态指示灯行（位于列2主数值列，精确靠右对齐）
         标签跨 0-1 列以防止长文本在窄屏下被截断
@@ -231,9 +231,9 @@ class BladeTelemetryCard(TelemetryCard):
 
     def _setup_blade_rows(self):
         # 1. 压力遥测行
-        self.add_value_row("p_accu", "Pressure accu (107)", unit="bar", default_val="193.4")
-        self.add_value_row("p_piston", "Pressure piston (135)", unit="bar", default_val="192.2")
-        self.add_value_row("p_rod", "Pressure rod (136)", unit="bar", default_val="2.5")
+        self.add_value_row("p_accu", "Pressure accu (107)", unit="bar", default_val="0.0")
+        self.add_value_row("p_piston", "Pressure piston (135)", unit="bar", default_val="0.0")
+        self.add_value_row("p_rod", "Pressure rod (136)", unit="bar", default_val="0.0")
 
         # 2. 变桨参考指令状态
         self.add_status_row("pitch_ref", "Pitch reference", default_status="Inactive")
@@ -241,7 +241,7 @@ class BladeTelemetryCard(TelemetryCard):
         # 3. 位置输出行（严格分为两个独立显示框：油缸位移 mm + 叶片角度 °）
         self.add_dual_output_row("pos_cyl", "pos_ang", "Cyl. position",
                                 unit1="mm", unit2="°",
-                                default1="576", default2="89.0")
+                                default1="0", default2="0.0")
 
         # 4. 速度输出行（严格分为两个独立显示框：油缸速度 mm/s + 角速度 °/s）
         self.add_dual_output_row("spd_cyl", "spd_ang", "Cyl. speed",
@@ -249,10 +249,10 @@ class BladeTelemetryCard(TelemetryCard):
                                 default1="0.0", default2="0.0")
 
         # 5. 阀芯开度
-        self.add_value_row("spool", "Spool position", unit="%", default_val="-0.1")
+        self.add_value_row("spool", "Spool position", unit="%", default_val="0.0")
 
         # 6. 变桨机械锁
-        self.add_led_row("pitch_lock", "Pitch lock engaged (135)", color="green", shape="square", size=14)
+        self.add_led_row("pitch_lock", "Pitch lock engaged (135)", color="grey", shape="square", size=14)
 
     def update_from_blade_data(self, b, lang="EN"):
         """
@@ -298,8 +298,4 @@ class LubricationTelemetryCard(TelemetryCard):
         ]
         for key, text, shape in items:
             self.add_left_led_row(key, text, color="grey", shape=shape, size=13)
-
-        # Default tank status OK
-        self.set_led_state("tank1_ok", True, "green")
-        self.set_led_state("tank2_ok", True, "green")
 
