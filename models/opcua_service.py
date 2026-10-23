@@ -734,6 +734,13 @@ class OpcUaWorker(QObject):
                         "ack_all": client.get_node(f"{BASE_NODE_PREFIX}xAcknowledgeAll"),
                         # Standard OPC UA Server CurrentTime (ns=0;i=2258)
                         "server_current_time": client.get_node("ns=0;i=2258"),
+
+                        # Remote Box / Manual Control Source Nodes
+                        "sim_rb_connected": client.get_node(f"{SIM_NODE_PREFIX}bRemoteBoxConnected"),
+                        "sim_rb_in_control": client.get_node(f"{SIM_NODE_PREFIX}bRemoteBoxInControl"),
+                        "pac_rb_connected": client.get_node(f"{BASE_NODE_PREFIX}pac.io.dIn.remoteBoxConnected"),
+                        "hmi_user_input": client.get_node(f"{BASE_NODE_PREFIX}hmi.sUserInput"),
+                        "hmi_rb_enabled": client.get_node(f"{BASE_NODE_PREFIX}hmi.remoteboxEnbaled"),
                     }
 
                     # Blades nodes (0=A, 1=B, 2=C) - Standard Common.blade[i]
@@ -928,12 +935,29 @@ class OpcUaWorker(QObject):
                         nodes["hpu_temp"] = None
                         nodes["hpu_state"] = None
 
-
+                    # Check optional Remote Box nodes
+                    for rb_key in ["sim_rb_connected", "sim_rb_in_control", "pac_rb_connected", "hmi_user_input", "hmi_rb_enabled"]:
+                        try:
+                            await nodes[rb_key].read_attribute(ua.AttributeIds.NodeId)
+                        except Exception:
+                            nodes[rb_key] = None
 
                     # Build declarative batch read specifications for single round-trip polling
                     batch_read_specs = [
                         ("plc_time", nodes["server_current_time"], lambda v: v.astimezone() if hasattr(v, "astimezone") else v),
                     ]
+
+                    # Remote Box telemetry specs
+                    if nodes.get("sim_rb_connected") is not None:
+                        batch_read_specs.append(("sim_remote_box_connected", nodes["sim_rb_connected"], bool))
+                    if nodes.get("sim_rb_in_control") is not None:
+                        batch_read_specs.append(("sim_remote_box_in_control", nodes["sim_rb_in_control"], bool))
+                    if nodes.get("pac_rb_connected") is not None:
+                        batch_read_specs.append(("pac_remote_box_connected", nodes["pac_rb_connected"], bool))
+                    if nodes.get("hmi_user_input") is not None:
+                        batch_read_specs.append(("hmi_user_input", nodes["hmi_user_input"], int))
+                    if nodes.get("hmi_rb_enabled") is not None:
+                        batch_read_specs.append(("hmi_remote_box_enabled", nodes["hmi_rb_enabled"], int))
 
                     if has_pac_nodes:
                         batch_read_specs.extend([

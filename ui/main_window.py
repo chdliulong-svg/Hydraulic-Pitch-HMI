@@ -573,7 +573,12 @@ class MainWindow(QMainWindow):
             self.lbl_ver.setText(f"SW: {self.plc.pac_version_sw}\nHW: {self.plc.pac_version_hw}")
         self.lbl_blade_state.setText(tr(self.plc.blade_state, self.current_lang))
         self.lbl_blade_mode.setText(tr(self.plc.blade_mode, self.current_lang))
-        self.lbl_ctrl_source.setText(tr(self.plc.manual_control_source, self.current_lang))
+        ctrl_src_text = tr(self.plc.manual_control_source, self.current_lang)
+        self.lbl_ctrl_source.setText(ctrl_src_text)
+        if self.plc.manual_control_source == "Remote Box":
+            self.lbl_ctrl_source.setStyleSheet("font-size: 12px; font-weight: bold; color: #0284C7; margin-top: 2px;")
+        else:
+            self.lbl_ctrl_source.setStyleSheet("font-size: 12px; color: #1F2937; margin-top: 2px;")
 
         # Update Start/Stop button (Strictly adhering to PLC Main.st rules)
         # In PLC:

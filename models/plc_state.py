@@ -66,6 +66,7 @@ class PLCStateManager(QObject):
         
         # Control Source
         self.remote_box_connected = False
+        self.remote_box_in_control = False
         self.manual_control_source = "HMI"  # "HMI" or "Remote Box"
         self.safety_ok = False
         
@@ -369,6 +370,30 @@ class PLCStateManager(QObject):
 
         if "hmi_pitch_lock" in data and data["hmi_pitch_lock"] is not None:
             self.manual_pitch_lock_disengaged = bool(data["hmi_pitch_lock"])
+
+        # Remote Box connection & manual control source telemetry
+        rb_conn_candidates = []
+        if "sim_remote_box_connected" in data and data["sim_remote_box_connected"] is not None:
+            rb_conn_candidates.append(bool(data["sim_remote_box_connected"]))
+        if "pac_remote_box_connected" in data and data["pac_remote_box_connected"] is not None:
+            rb_conn_candidates.append(bool(data["pac_remote_box_connected"]))
+        if "hmi_remote_box_enabled" in data and data["hmi_remote_box_enabled"] is not None:
+            rb_conn_candidates.append(bool(int(data["hmi_remote_box_enabled"]) & 2))
+        if rb_conn_candidates:
+            self.remote_box_connected = any(rb_conn_candidates)
+
+        rb_ctrl_candidates = []
+        if "sim_remote_box_in_control" in data and data["sim_remote_box_in_control"] is not None:
+            rb_ctrl_candidates.append(bool(data["sim_remote_box_in_control"]))
+        if "hmi_user_input" in data and data["hmi_user_input"] is not None:
+            rb_ctrl_candidates.append(int(data["hmi_user_input"]) == 40)
+        if rb_ctrl_candidates:
+            self.remote_box_in_control = any(rb_ctrl_candidates)
+
+        if self.remote_box_connected or getattr(self, "remote_box_in_control", False):
+            self.manual_control_source = "Remote Box"
+        else:
+            self.manual_control_source = "HMI"
 
         # Lubrication pump feedback from pac.io.dOut
         if "pac_lub1_pump_on" in data and data["pac_lub1_pump_on"] is not None:
