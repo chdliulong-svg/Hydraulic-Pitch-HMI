@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-OPC UA Client Service for SEC PAC 6MW Hydraulic Pitch Control System
+OPC UA Client Service for Hydraulic Pitch Control System
 Connects asynchronously to CODESYS OPC UA Server (opc.tcp://127.0.0.1:4840)
 Reads live IEC variables from 'ns=4;s=|var|CODESYS Control Win V3.PAC.Common.*'
 and emits Qt signals to update HMI models in real-time.
 """
 
 import asyncio
+import math
 import time
 import queue
 from dataclasses import dataclass
@@ -14,14 +15,15 @@ from typing import Dict, Any, Optional, List, Tuple, Callable
 from PyQt6.QtCore import QThread, pyqtSignal, QObject, QTimer
 
 from config import (
-    OPCUA_ENDPOINT, OPCUA_POLL_INTERVAL, BASE_NODE_PREFIX,
+    OPCUA_ENDPOINT, OPCUA_POLL_INTERVAL, BASE_NODE_PREFIX, SIM_NODE_PREFIX,
     OPCUA_CONNECT_TIMEOUT, OPCUA_RETRY_INTERVAL,
     OPCUA_PULSE_RESET_DELAY, OPCUA_PULSE_RESET_INT_DELAY, OPCUA_DISCONNECT_WAIT_MS,
     ALARM_POLL_DECIMATION, ALARM_CHUNK_SIZE, ALARM_HISTORY_MAX_FETCH,
     GRD_MIN_VALUE, GRD_MAX_VALUE,
     OFFSET_MIN_DEG, OFFSET_MAX_DEG,
     OPCUA_STRICT_RAISE_EXCEPTIONS,
-    STATE_ABORTED, STATE_STOPPED, STATE_IDLE
+    STATE_ABORTED, STATE_STOPPED, STATE_IDLE,
+    TELEMETRY_GLITCH_FILTER_ENABLED, TELEMETRY_GLITCH_MAX_HOLD_FRAMES
 )
 from utils.logger import get_logger, OpcUaWriteError
 
@@ -45,6 +47,31 @@ MAINT_VALVE_PLC_FIELDS = {
     "v132": "pLockTV132Open",
 }
 MAINTENANCE_VALVES = list(MAINT_VALVE_PLC_FIELDS.keys())
+
+
+def cyl_mm_to_pitch_deg(cyl_mm: float, pos_off_deg: float = -2.10, mech_off_deg: float = -1.0) -> float:
+    """
+    Standard PAC IEC 61131-3 CylToPitch kinematic conversion:
+    Calculates pitch angle (deg) from hydraulic cylinder stroke (mm).
+    Kinematics parameters match PAC CylToPitch FB & PRG_main_pac.st:
+      rc = 0.669 m (crank radius)
+      rp = 1.730 m (pitch radius)
+      lCylMin = 1.401 m (minimum retracted cylinder length)
+      mechOffSetDeg = -1.0 deg (mechanical mounting offset)
+      posOffDeg = calibration zero offset (-2.10 deg default)
+    """
+    rc = 0.669
+    rp = 1.730
+    lCylMin = 1.401
+    cyl_m = max(0.0, float(cyl_mm)) / 1000.0
+    try:
+        start_angle = math.acos((rc**2 + rp**2 - lCylMin**2) / (2 * rc * rp))
+        ratio = (rc**2 + rp**2 - (lCylMin + cyl_m)**2) / (2 * rc * rp)
+        ratio = max(-1.0, min(1.0, ratio))
+        pitch_pos_rad = math.acos(ratio) - start_angle
+        return pitch_pos_rad * (180.0 / math.pi) + pos_off_deg + mech_off_deg
+    except Exception:
+        return 0.0
 
 
 @dataclass(frozen=True)
@@ -150,6 +177,175 @@ def resolve_node_spec(cmd_name: str, registry: Dict[str, NodeSpec]) -> NodeSpec:
     return NodeSpec(ua.VariantType.Boolean, is_pulse=False, converter=bool)
 
 
+class TelemetryGlitchFilter:
+    """
+    方案 2: 上位机采集平滑与零点毛刺防抖过滤器 (Anti-Glitch / Zero-Drop Debounce Filter)
+
+    解决在数字孪生仿真机 (pitchsim) 与下位机 PLC 联合运行场景下，
+    由于 PLC 任务周期 (MainTask 10ms) 内部时序竞争：
+    PRG_main_pac（未插物理硬件传感器通道置零）与 PRG_pitch_sim（仿真值覆盖注入）
+    在 10ms 扫描周期内的“双写竞争”。上位机以 100ms 异步采样时，若读取时机落在
+    PRG_main_pac 与 PRG_pitch_sim 之间，会瞬态读到 0.0，造成上位机界面高频跳变。
+
+    本过滤器对油缸位移、蓄能器/腔室压力、阀芯开度反馈、桨叶角度与速度等核心遥测物理量，
+    执行轻量级非零保持与瞬态毛刺抑制：
+    1. 当上一次采样处于正常非零工作区间时，若当前帧瞬态突跌至 0.0（或物理不可能的零点毛刺），
+       启动防抖计数器，在 MAX_HOLD_FRAMES (默认 5 帧 / 500ms) 内保持上一帧有效值；
+    2. 当零值持续超过 MAX_HOLD_FRAMES 时，认定为真实停机、泄压或仿真断开，正常下发 0.0；
+    3. 当新有效非零采样到达时，立即更新并清零防抖计数器（零延迟跟踪）；
+    4. 消除由位移/角度零点瞬跌引起的离散微分速度伪跳变（速度毛刺消除）。
+    """
+    def __init__(self, max_hold_frames: int = TELEMETRY_GLITCH_MAX_HOLD_FRAMES, enabled: bool = TELEMETRY_GLITCH_FILTER_ENABLED):
+        self.max_hold_frames = max_hold_frames
+        self.enabled = enabled
+        self._blade_telemetry_cache: Dict[int, Dict[str, Any]] = {}
+        self._blade_glitch_counter: Dict[int, int] = {0: 0, 1: 0, 2: 0}
+        self._hpu_pressure_cache: Optional[float] = None
+        self._hpu_glitch_counter: int = 0
+        self._current_pos_cache: Optional[float] = None
+        self._current_pos_glitch_counter: int = 0
+
+    def reset(self):
+        """重置过滤器缓存与防抖计数器（在网络重连或断开时调用）"""
+        self._blade_telemetry_cache.clear()
+        self._blade_glitch_counter = {0: 0, 1: 0, 2: 0}
+        self._hpu_pressure_cache = None
+        self._hpu_glitch_counter = 0
+        self._current_pos_cache = None
+        self._current_pos_glitch_counter = 0
+
+    def filter_blade_telemetry(self, blade_idx: int, raw_payload: Dict[str, Any],
+                               is_ref_active: bool, locked: bool) -> Dict[str, Any]:
+        """对单支桨叶 (Blade A/B/C) 的全套传感器遥测进行零点毛刺抑制与平滑"""
+        if not self.enabled:
+            return {
+                "pres_accu": float(raw_payload.get(f"bld_{blade_idx}_pres_accu", 0.0) or 0.0),
+                "pres_piston": float(raw_payload.get(f"bld_{blade_idx}_pres_piston", 0.0) or 0.0),
+                "pres_rod": float(raw_payload.get(f"bld_{blade_idx}_pres_rod", 0.0) or 0.0),
+                "cyl_pos": float(raw_payload.get(f"bld_{blade_idx}_cyl_pos", 0.0) or 0.0),
+                "cyl_spd": float(raw_payload.get(f"bld_{blade_idx}_cyl_spd", 0.0) or 0.0),
+                "spool_pos_fb": float(raw_payload.get(f"bld_{blade_idx}_spool_fb", 0.0) or 0.0),
+                "pos_act_deg": float(raw_payload.get(f"bld_{blade_idx}_pos_deg", 0.0) or 0.0),
+                "rate_act_deg": float(raw_payload.get(f"bld_{blade_idx}_rate_deg", 0.0) or 0.0),
+                "pitch_lock_engaged": locked,
+                "pitch_ref_active": is_ref_active,
+            }
+
+        raw_pres_accu = float(raw_payload.get(f"bld_{blade_idx}_pres_accu", 0.0) or 0.0)
+        raw_pres_piston = float(raw_payload.get(f"bld_{blade_idx}_pres_piston", 0.0) or 0.0)
+        raw_pres_rod = float(raw_payload.get(f"bld_{blade_idx}_pres_rod", 0.0) or 0.0)
+        raw_cyl_pos = float(raw_payload.get(f"bld_{blade_idx}_cyl_pos", 0.0) or 0.0)
+        raw_cyl_spd = float(raw_payload.get(f"bld_{blade_idx}_cyl_spd", 0.0) or 0.0)
+        raw_spool_fb = float(raw_payload.get(f"bld_{blade_idx}_spool_fb", 0.0) or 0.0)
+        raw_pos_deg = float(raw_payload.get(f"bld_{blade_idx}_pos_deg", 0.0) or 0.0)
+        raw_rate_deg = float(raw_payload.get(f"bld_{blade_idx}_rate_deg", 0.0) or 0.0)
+
+        cached = self._blade_telemetry_cache.get(blade_idx)
+
+        # 诊断是否存在由 PLC 周期时序冲突导致的零点毛刺或微分尖峰
+        is_glitch = False
+        if cached is not None:
+            # 1. 蓄能器压力异常跌零（工作压力通常在 50~260 bar 之间）
+            accu_glitch = (raw_pres_accu < 5.0 and cached["pres_accu"] > 20.0)
+            # 2. 油缸位移异常跌零（正常运行行程通常 >= 10mm）
+            cyl_glitch = (raw_cyl_pos < 1.0 and cached["cyl_pos"] > 5.0)
+            # 3. 油缸工作腔压力瞬态跌零
+            chamber_glitch = (raw_pres_piston < 1.0 and raw_pres_rod < 1.0 and (cached["pres_piston"] > 10.0 or cached["pres_rod"] > 10.0))
+            # 4. 桨叶角度异常跌至零位偏置
+            angle_glitch = (abs(raw_pos_deg) < 0.2 and abs(cached["pos_act_deg"]) > 2.0)
+            # 5. 由零点跳变引发的微分速度假毛刺
+            rate_glitch = (abs(raw_rate_deg) > 12.0 and abs(cached["rate_act_deg"]) < 8.0)
+            spd_glitch = (abs(raw_cyl_spd) > 200.0 and abs(cached["cyl_spd"]) < 100.0)
+
+            is_glitch = accu_glitch or cyl_glitch or chamber_glitch or angle_glitch or rate_glitch or spd_glitch
+
+        if is_glitch:
+            count = self._blade_glitch_counter.get(blade_idx, 0) + 1
+            if count <= self.max_hold_frames:
+                self._blade_glitch_counter[blade_idx] = count
+                # 保持前一帧健康数据，同时保留当前最新离散锁与参考状态
+                return {
+                    "pres_accu": cached["pres_accu"],
+                    "pres_piston": cached["pres_piston"],
+                    "pres_rod": cached["pres_rod"],
+                    "cyl_pos": cached["cyl_pos"],
+                    "cyl_spd": cached["cyl_spd"],
+                    "spool_pos_fb": cached["spool_pos_fb"],
+                    "pos_act_deg": cached["pos_act_deg"],
+                    "rate_act_deg": cached["rate_act_deg"],
+                    "pitch_lock_engaged": locked,
+                    "pitch_ref_active": is_ref_active,
+                }
+            else:
+                # 零值已持续超过门限帧数 (> 500ms)，判定为真实停机/断开状态
+                self._blade_glitch_counter[blade_idx] = 0
+                val = {
+                    "pres_accu": raw_pres_accu,
+                    "pres_piston": raw_pres_piston,
+                    "pres_rod": raw_pres_rod,
+                    "cyl_pos": raw_cyl_pos,
+                    "cyl_spd": 0.0 if (abs(raw_cyl_spd) > 200.0) else raw_cyl_spd,
+                    "spool_pos_fb": raw_spool_fb,
+                    "pos_act_deg": raw_pos_deg,
+                    "rate_act_deg": 0.0 if (abs(raw_rate_deg) > 12.0) else raw_rate_deg,
+                    "pitch_lock_engaged": locked,
+                    "pitch_ref_active": is_ref_active,
+                }
+                self._blade_telemetry_cache[blade_idx] = val
+                return val
+        else:
+            self._blade_glitch_counter[blade_idx] = 0
+            val = {
+                "pres_accu": raw_pres_accu,
+                "pres_piston": raw_pres_piston,
+                "pres_rod": raw_pres_rod,
+                "cyl_pos": raw_cyl_pos,
+                "cyl_spd": raw_cyl_spd,
+                "spool_pos_fb": raw_spool_fb,
+                "pos_act_deg": raw_pos_deg,
+                "rate_act_deg": raw_rate_deg,
+                "pitch_lock_engaged": locked,
+                "pitch_ref_active": is_ref_active,
+            }
+            self._blade_telemetry_cache[blade_idx] = val
+            return val
+
+    def filter_hpu_pressure(self, raw_hpu_p: Optional[float]) -> Optional[float]:
+        """过滤 HPU 泵站母管供油压力零点毛刺"""
+        if not self.enabled or raw_hpu_p is None:
+            return raw_hpu_p
+        cached = self._hpu_pressure_cache
+        if cached is not None and raw_hpu_p < 5.0 and cached > 20.0:
+            if self._hpu_glitch_counter < self.max_hold_frames:
+                self._hpu_glitch_counter += 1
+                return cached
+            else:
+                self._hpu_glitch_counter = 0
+                self._hpu_pressure_cache = raw_hpu_p
+                return raw_hpu_p
+        self._hpu_glitch_counter = 0
+        self._hpu_pressure_cache = raw_hpu_p
+        return raw_hpu_p
+
+    def filter_current_pos(self, raw_pos: Optional[float], active_blade: int = 0) -> Optional[float]:
+        """过滤手动控制页面 CurrentPos 零点跳变"""
+        if not self.enabled or raw_pos is None:
+            return raw_pos
+        cached = self._current_pos_cache
+        bld_glitching = (self._blade_glitch_counter.get(active_blade, 0) > 0)
+        if cached is not None and (bld_glitching or (abs(raw_pos) < 0.2 and abs(cached) > 2.0)):
+            if self._current_pos_glitch_counter < self.max_hold_frames:
+                self._current_pos_glitch_counter += 1
+                return cached
+            else:
+                self._current_pos_glitch_counter = 0
+                self._current_pos_cache = raw_pos
+                return raw_pos
+        self._current_pos_glitch_counter = 0
+        self._current_pos_cache = raw_pos
+        return raw_pos
+
+
 class OpcUaWorker(QObject):
     """Async worker running an event loop inside a QThread"""
     data_updated = pyqtSignal(dict)
@@ -171,9 +367,19 @@ class OpcUaWorker(QObject):
         self._force_alarm_poll: bool = False
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self.last_write_error: Optional[Exception] = None
+        self._prev_pitch_angles: Dict[int, float] = {}
+        self.glitch_filter = TelemetryGlitchFilter(
+            max_hold_frames=TELEMETRY_GLITCH_MAX_HOLD_FRAMES,
+            enabled=TELEMETRY_GLITCH_FILTER_ENABLED
+        )
 
     def stop(self):
         self._running = False
+
+    def set_glitch_filter_enabled(self, enabled: bool):
+        """Enable or disable telemetry anti-glitch / zero-drop debounce filter"""
+        self.glitch_filter.enabled = enabled
+        logger.info(f"[OPCUA] Telemetry glitch filter {'ENABLED' if enabled else 'DISABLED'}")
 
     def update_endpoint(self, endpoint_url: str, poll_interval: float = 0.1):
         """Update endpoint URL and trigger dynamic reconnection"""
@@ -530,7 +736,7 @@ class OpcUaWorker(QObject):
                         "server_current_time": client.get_node("ns=0;i=2258"),
                     }
 
-                    # Blades nodes (0=A, 1=B, 2=C)
+                    # Blades nodes (0=A, 1=B, 2=C) - Standard Common.blade[i]
                     for i in range(3):
                         prefix = f"{BASE_NODE_PREFIX}blade[{i}]."
                         nodes[f"bld_{i}_pres_accu"] = client.get_node(f"{prefix}io.ai.presAccu")
@@ -722,6 +928,8 @@ class OpcUaWorker(QObject):
                         nodes["hpu_temp"] = None
                         nodes["hpu_state"] = None
 
+
+
                     # Build declarative batch read specifications for single round-trip polling
                     batch_read_specs = [
                         ("plc_time", nodes["server_current_time"], lambda v: v.astimezone() if hasattr(v, "astimezone") else v),
@@ -903,23 +1111,45 @@ class OpcUaWorker(QObject):
                                     except Exception:
                                         data_payload[key] = val
 
-                            # Structure 3 blades directly from lower machine PLC
+                            # Structure 3 blades directly from lower machine PLC Common.blade[i]
                             ref_status_keys = ["hmi_hide_pitch_ref_a", "hmi_hide_pitch_ref_b", "hmi_hide_pitch_ref_c"]
                             for i in range(3):
                                 raw_ref = data_payload.get(ref_status_keys[i], 0)
                                 is_ref_active = bool(int(raw_ref) & 1) if raw_ref is not None else False
-                                data_payload[f"blade_{i}"] = {
-                                    "pres_accu": data_payload.get(f"bld_{i}_pres_accu", 0.0),
-                                    "pres_piston": data_payload.get(f"bld_{i}_pres_piston", 0.0),
-                                    "pres_rod": data_payload.get(f"bld_{i}_pres_rod", 0.0),
-                                    "cyl_pos": data_payload.get(f"bld_{i}_cyl_pos", 0.0),
-                                    "cyl_spd": data_payload.get(f"bld_{i}_cyl_spd", 0.0),
-                                    "spool_pos_fb": data_payload.get(f"bld_{i}_spool_fb", 0.0),
-                                    "pos_act_deg": data_payload.get(f"bld_{i}_pos_deg", 0.0),
-                                    "rate_act_deg": data_payload.get(f"bld_{i}_rate_deg", 0.0),
-                                    "pitch_lock_engaged": data_payload.get(f"bld_{i}_locked", False),
-                                    "pitch_ref_active": is_ref_active,
-                                }
+                                locked = bool(data_payload.get(f"bld_{i}_locked", False))
+
+                                # Process Common.blade[i] with glitch filter
+                                blade_data = self.glitch_filter.filter_blade_telemetry(
+                                    blade_idx=i,
+                                    raw_payload=data_payload,
+                                    is_ref_active=is_ref_active,
+                                    locked=locked
+                                )
+
+                                data_payload[f"blade_{i}"] = blade_data
+
+                                # Synchronize top-level fields
+                                data_payload[f"bld_{i}_pres_accu"] = blade_data["pres_accu"]
+                                data_payload[f"bld_{i}_pres_piston"] = blade_data["pres_piston"]
+                                data_payload[f"bld_{i}_pres_rod"] = blade_data["pres_rod"]
+                                data_payload[f"bld_{i}_cyl_pos"] = blade_data["cyl_pos"]
+                                data_payload[f"bld_{i}_cyl_spd"] = blade_data["cyl_spd"]
+                                data_payload[f"bld_{i}_spool_fb"] = blade_data["spool_pos_fb"]
+                                data_payload[f"bld_{i}_pos_deg"] = blade_data["pos_act_deg"]
+                                data_payload[f"bld_{i}_rate_deg"] = blade_data["rate_act_deg"]
+
+                            # Filter or pass HPU pressure
+                            if "hpu_pressure" in data_payload:
+                                data_payload["hpu_pressure"] = self.glitch_filter.filter_hpu_pressure(
+                                    data_payload["hpu_pressure"]
+                                )
+
+                            # Filter or update manual page CurrentPos
+                            if "hmi_current_pos" in data_payload:
+                                active_b = data_payload.get("hmi_active_blade", 0)
+                                data_payload["hmi_current_pos"] = self.glitch_filter.filter_current_pos(
+                                    data_payload["hmi_current_pos"], active_blade=active_b
+                                )
 
                             # Map HPU state
                             if "hpu_state_raw" in data_payload:
@@ -977,9 +1207,13 @@ class OpcUaWorker(QObject):
                     for t in self._pulse_tasks.values():
                         t.cancel()
                     self._pulse_tasks.clear()
+                    self._prev_pitch_angles.clear()
+                    self.glitch_filter.reset()
 
             except Exception as conn_err:
                 logger.warning(f"[OPCUA] Connection failed or dropped: {conn_err}")
+                self._prev_pitch_angles.clear()
+                self.glitch_filter.reset()
                 self.connection_status.emit(False, f"Offline ({conn_err})")
                 await asyncio.sleep(OPCUA_RETRY_INTERVAL)  # Retry delay
 
@@ -1024,6 +1258,11 @@ class OpcUaService(QThread):
     def _on_connection_status(self, connected: bool, msg: str):
         self.is_connected = connected
         self.connection_changed.emit(connected, msg)
+
+    def set_glitch_filter_enabled(self, enabled: bool):
+        """Enable or disable telemetry anti-glitch / zero-drop debounce filter"""
+        if self.worker:
+            self.worker.set_glitch_filter_enabled(enabled)
 
     def stop(self):
         if self.worker:

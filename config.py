@@ -8,7 +8,7 @@ import os
 # =============================================================================
 # 1. Window & UI Framework Settings
 # =============================================================================
-WINDOW_TITLE = "SEC PAC HMI -  Hydraulic Pitch Control System"
+WINDOW_TITLE = "PAC HMI - Hydraulic Pitch Control System"
 WINDOW_WIDTH = 1100
 WINDOW_HEIGHT = 680
 WINDOW_MIN_WIDTH = 1100
@@ -62,6 +62,8 @@ OPCUA_NAMESPACE_INDEX = 4                     # Namespace index for CODESYS user
 
 # Full OPC UA Node Base Prefix: "ns=4;s=|var|CODESYS Control Win V3.PAC.Common."
 BASE_NODE_PREFIX = f"ns={OPCUA_NAMESPACE_INDEX};s=|var|{OPCUA_DEVICE_NAME}.{OPCUA_APP_NAME}.{OPCUA_GVL_NAME}."
+# Simulation Engine OPC UA Node Prefix: "ns=4;s=|var|CODESYS Control Win V3.PAC.PRG_pitch_sim."
+SIM_NODE_PREFIX = f"ns={OPCUA_NAMESPACE_INDEX};s=|var|{OPCUA_DEVICE_NAME}.{OPCUA_APP_NAME}.PRG_pitch_sim."
 
 # OPC UA Handshake & Connection Timeouts
 OPCUA_CONNECT_TIMEOUT = 4.0          # Client connection handshake timeout (seconds)
@@ -70,6 +72,10 @@ OPCUA_RETRY_INTERVAL = 1.5           # Disconnect retry interval (seconds)
 OPCUA_PULSE_RESET_DELAY = 0.2        # Boolean pulse auto-reset delay (seconds)
 OPCUA_PULSE_RESET_INT_DELAY = 0.5    # Integer command pulse auto-reset delay (seconds)
 OPCUA_DISCONNECT_WAIT_MS = 2000      # Thread termination wait timeout (milliseconds)
+
+# Telemetry Glitch & Zero-Drop Debounce Filter (方案 2: 采样防抖 / 零点毛刺平滑)
+TELEMETRY_GLITCH_FILTER_ENABLED = True
+TELEMETRY_GLITCH_MAX_HOLD_FRAMES = 5  # Hold last valid non-zero telemetry for up to 5 consecutive frames (~500ms)
 
 # =============================================================================
 # 4. PLC Network Configuration Defaults

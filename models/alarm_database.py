@@ -746,7 +746,7 @@ ALARM_DATABASE: dict[int, AlarmDefinition] = {
     318: AlarmDefinition(
         code=318,
         name="normalStopFromMC",
-        message_en="SEC Normal Stop request",
+        message_en="Turbine Normal Stop request",
         message_cn="主控发出正常停机 (Normal Stop) 请求",
         severity=100,
         pv_field=None,
@@ -754,7 +754,7 @@ ALARM_DATABASE: dict[int, AlarmDefinition] = {
     320: AlarmDefinition(
         code=320,
         name="EMFfromMC",
-        message_en="SEC EMF request",
+        message_en="Turbine EMF request",
         message_cn="主控发出紧急顺桨 (EMF) 请求",
         severity=200,
         pv_field=None,
@@ -762,7 +762,7 @@ ALARM_DATABASE: dict[int, AlarmDefinition] = {
     324: AlarmDefinition(
         code=324,
         name="LVRTfromMC",
-        message_en="SEC LVRT signal",
+        message_en="Turbine LVRT signal",
         message_cn="主控发出低电压穿越 (LVRT) 触发信号",
         severity=50,
         pv_field=None,

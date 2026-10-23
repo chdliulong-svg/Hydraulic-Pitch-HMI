@@ -1,8 +1,8 @@
 # Hydraulic-Pitch-HMI
 
-**SEC PAC 6MW 液压变桨控制系统上位机人机界面 (Hydraulic Pitch Control System HMI)**
+**大型风电机组液压变桨控制系统上位机人机界面 (Hydraulic Pitch Control System HMI)**
 
-本项目基于 **Python + PyQt6 + asyncua** 构建，专为 6MW 大型风力发电机组液压变桨系统设计，符合工业人机界面标准与 PackML 状态机控制规范，通过 OPC UA 协议与下位机 CODESYS PLC 进行实时高速通信与数据交互。
+本项目基于 **Python + PyQt6 + asyncua** 构建，专为大型兆瓦级风力发电机组液压变桨系统设计，符合工业人机界面标准与 PackML 状态机控制规范，通过 OPC UA 协议与下位机 CODESYS PLC 进行实时高速通信与数据交互。
 
 ---
 
@@ -32,7 +32,7 @@
 
 6. **中英文双语界面与工业风格 (Bilingual & Industrial UI)**
    - 全页面支持一键切换简体中文 / 英文界面。
-   - 遵循 Hydratech 工业设计规范的高对比度中性灰工业主题。
+   - 遵循工业设计规范的高对比度中性灰工业主题。
 
 ---
 

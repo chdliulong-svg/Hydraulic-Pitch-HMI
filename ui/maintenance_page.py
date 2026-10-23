@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Maintenance Mode Page - SEC PAC 6MW Hydraulic Pitch HMI
+Maintenance Mode Page - Hydraulic Pitch HMI
 Matching Figures 26 - 42 of DFB1001650_DFB011019
 Optimized with clean industrial layout, bilingual i18n support,
 pixel-aligned button decks, and safety instruction card.
@@ -712,11 +712,6 @@ class MaintenancePage(QWidget):
         req = self.chk_hpu_pressure.isChecked()
         self.plc.hpu_pressure_buildup_req = req
         self.opcua_service.apply_maint_hpu(req)
-        QMessageBox.information(
-            self,
-            tr("HPU", self.current_lang),
-            tr("HPU pressure request applied to PLC successfully.", self.current_lang)
-        )
         self.update_ui_state()
 
     def reset_hpu(self):
@@ -747,11 +742,6 @@ class MaintenancePage(QWidget):
         self.plc.pump1_active = p1
         self.plc.pump2_active = p2
         self.opcua_service.apply_maint_lub(p1, p2)
-        QMessageBox.information(
-            self,
-            tr("Lubrication", self.current_lang),
-            tr("Lubrication pump settings applied to PLC successfully.", self.current_lang)
-        )
         self.update_ui_state()
 
     def reset_lub(self):
@@ -794,12 +784,6 @@ class MaintenancePage(QWidget):
             spool_cmds.append(float(val))
 
         self.opcua_service.apply_maint_pac(valves_by_blade, spool_cmds)
-
-        QMessageBox.information(
-            self,
-            tr("PAC Control", self.current_lang),
-            tr("PAC valve actuations and proportional commands applied to PLC successfully!", self.current_lang)
-        )
         self.update_ui_state()
 
     def reset_pac(self):

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Manual Mode Page - SEC PAC 6MW Hydraulic Pitch HMI
+Manual Mode Page - Hydraulic Pitch HMI
 Matching Figures 12 - 25 of DFB1001650_DFB011019
 Fully redesigned with pixel-perfect industrial grid alignment, clean authorization badges,
 and balanced component hierarchy.
@@ -731,7 +731,7 @@ class ManualPage(QWidget):
 
     def _style_industrial_toggle_btn(self, is_pressed: bool) -> str:
         """
-        Unified tactile industrial toggle button style matching B&R / Hydratech HMI.
+        Unified tactile industrial toggle button style matching standard industrial HMI.
         - is_pressed == False (Unpressed / Raised / 弹起): 3D tactile raised button with bottom shadow
         - is_pressed == True (Pressed / Sunken / 按下去): Deep 3D sunken inset into console with top shadow
         """
@@ -1240,10 +1240,6 @@ class ManualPage(QWidget):
         # Pulse Common.hmi.buttons.applyPPCSelection = 1 to trigger PLC handshake
         self.opcua_service.apply_pitch_position_calib()
 
-        title = tr("Calibration Success", self.current_lang)
-        msg = tr("Pitch Position Calibration applied successfully to PLC!", self.current_lang)
-        QMessageBox.information(self, title, msg)
-
     def apply_grd_calib(self):
         # 1. Pre-validate all 3 blades
         invalid_blades = []
@@ -1290,7 +1286,3 @@ class ManualPage(QWidget):
 
         # Pulse Common.hmi.buttons.applyGRDSelection = 1 to trigger PLC handshake
         self.opcua_service.apply_grd_calib()
-
-        title = tr("Calibration Success", self.current_lang)
-        msg = tr("GRD Calibration applied successfully to PLC!", self.current_lang)
-        QMessageBox.information(self, title, msg)

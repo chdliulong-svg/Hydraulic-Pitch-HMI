@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PAC State and Telemetry Model for SEC PAC 6MW Hydraulic Pitch HMI
+PAC State and Telemetry Model for Hydraulic Pitch HMI
 Holds PackML states, blade parameters, and OPC UA telemetry
 """
 

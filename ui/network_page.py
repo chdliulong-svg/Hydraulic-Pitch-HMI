@@ -532,12 +532,6 @@ class NetworkPage(QWidget):
         self.edit_new_ip.setStyleSheet(self._edit_style)
         self.edit_new_mask.setStyleSheet(self._edit_style)
 
-        title = tr("Network Settings", self.current_lang)
-        info_msg = tr(
-            "✔ Network parameters sent to PLC successfully!\n\nPlease perform PLC Soft Restart below to apply changes.",
-            self.current_lang
-        )
-        QMessageBox.information(self, title, info_msg)
         self.lbl_net_status.setText("✔ " + tr("Sent to PLC. Restart controller to apply", self.current_lang))
         self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D; margin-top: 4px;")
 
@@ -558,8 +552,8 @@ class NetworkPage(QWidget):
         if reply == QMessageBox.StandardButton.Yes:
             if self.opcua_service and self.plc.is_opcua_online:
                 self.opcua_service.send_plc_sys_reset()
-                success_msg = tr("PLC soft restart command sent successfully!", self.current_lang)
-                QMessageBox.information(self, title, success_msg)
+                self.lbl_net_status.setText("✔ " + tr("PLC soft restart command sent successfully!", self.current_lang))
+                self.lbl_net_status.setStyleSheet("font-size: 11px; font-weight: bold; color: #15803D; margin-top: 4px;")
             else:
                 warn_msg = tr("⚠️ PLC communication is offline. Cannot send soft restart command!\nPlease check OPC UA connection.", self.current_lang)
                 QMessageBox.warning(self, title, warn_msg)

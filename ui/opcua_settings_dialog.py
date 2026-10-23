@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Compact & Modern OPC UA Settings Dialog for SEC PAC 6MW Hydraulic Pitch HMI
+Compact & Modern OPC UA Settings Dialog for Hydraulic Pitch HMI
 Eliminates redundant frames, duplicate text labels, and bulky nesting.
 """
 

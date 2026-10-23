@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main Window Framework for SEC PAC 6MW Hydraulic Pitch HMI
+Main Window Framework for Hydraulic Pitch HMI
 Implements header bar, left status panel, right navigation buttons, and bottom status line
 """
 
@@ -246,16 +246,20 @@ class MainWindow(QMainWindow):
 
         hdr_layout.addStretch()
 
-        # Right Shanghai Electric Logo
+        # Right System Title / Logo
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        logo_path = os.path.join(base_dir, "resources", "shanghai_electric_logo.png")
+        logo_path = os.path.join(base_dir, "resources", "logo.png")
         lbl_logo = QLabel()
-        pix = QPixmap(logo_path)
-        if not pix.isNull():
-            lbl_logo.setPixmap(pix.scaledToHeight(44, Qt.TransformationMode.SmoothTransformation))
+        if os.path.exists(logo_path):
+            pix = QPixmap(logo_path)
+            if not pix.isNull():
+                lbl_logo.setPixmap(pix.scaledToHeight(44, Qt.TransformationMode.SmoothTransformation))
+            else:
+                lbl_logo.setText("HYDRAULIC PITCH SYSTEM")
+                lbl_logo.setStyleSheet("font-size: 16px; font-weight: bold; color: #1E293B; letter-spacing: 1px;")
         else:
-            lbl_logo.setText("上海电气 SHANGHAI ELECTRIC")
-            lbl_logo.setStyleSheet("font-size: 16px; font-weight: bold; color: #111827;")
+            lbl_logo.setText("HYDRAULIC PITCH SYSTEM")
+            lbl_logo.setStyleSheet("font-size: 16px; font-weight: bold; color: #1E293B; letter-spacing: 1px;")
         lbl_logo.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hdr_layout.addWidget(lbl_logo)
         layout.addWidget(hdr)

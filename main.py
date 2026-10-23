@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main Application Entry Point for SEC PAC 6MW Hydraulic Pitch HMI
+Main Application Entry Point for Hydraulic Pitch HMI
 Usage:
     python main.py          (Runs the interactive GUI)
     python main.py --test   (Runs automated headless/quick self-test)
@@ -31,7 +31,7 @@ logger = get_logger("hmi")
 
 def main():
     logger.info("=" * 60)
-    logger.info("Starting SEC PAC 6MW Hydraulic Pitch HMI Application")
+    logger.info("Starting Hydraulic Pitch HMI Application")
     logger.info(f"Target OPC UA Endpoint: {OPCUA_ENDPOINT}")
     logger.info("=" * 60)
 

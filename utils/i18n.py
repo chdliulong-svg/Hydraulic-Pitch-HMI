@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Internationalization (i18n) Module for SEC PAC 6MW Hydraulic Pitch HMI
+Internationalization (i18n) Module for Hydraulic Pitch HMI
 Supports instantaneous runtime switching between English and Chinese
 """
 

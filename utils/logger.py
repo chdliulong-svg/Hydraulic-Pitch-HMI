@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Logging Framework for SEC PAC Hydraulic Pitch HMI
+Logging Framework for PAC Hydraulic Pitch HMI
 Provides structured, rotating log file output and console logging,
 with custom exception classes for OPC UA write and telemetry failures.
 """

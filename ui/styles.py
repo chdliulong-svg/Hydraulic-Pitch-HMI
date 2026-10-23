@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Global Qt Stylesheet (QSS) for SEC PAC Hydraulic Pitch HMI
-Matching Hydratech Industries Wind Power industrial design guidelines:
+Global Qt Stylesheet (QSS) for PAC Hydraulic Pitch HMI
+Matching modern industrial wind power design guidelines:
 - Clean neutral gray palette (#E6E8EA background, #F8F9FA cards)
 - High-contrast typography (Segoe UI / Microsoft YaHei)
 - Industrial control states (hover, pressed, checked, disabled)
