@@ -4,6 +4,8 @@ HMI Configuration, Theme, Constants and Styling
 """
 
 import os
+import subprocess
+import hashlib
 
 # =============================================================================
 # 1. Window & UI Framework Settings
@@ -17,7 +19,64 @@ WINDOW_MIN_HEIGHT = 680
 HMI_VERSION = "1.0"
 UI_REFRESH_TIMER_MS = 100       # UI clock and state refresh timer in milliseconds
 TEST_AUTORUN_TIMEOUT_MS = 500   # Automated self-test quit delay in milliseconds
-import hashlib
+
+
+def get_git_commit(base_dir=None) -> tuple:
+    """
+    获取当前 Git 仓库的 Commit ID（短哈希与完整哈希）。
+    采用原生安全降级：优先 git rev-parse，次选读取 .git/HEAD，最后回退安全默认值。
+    """
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # 1. 尝试通过 git 命令获取
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        short_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=base_dir,
+            stderr=subprocess.DEVNULL,
+            timeout=1,
+            creationflags=flags
+        ).decode("utf-8").strip()
+
+        full_hash = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=base_dir,
+            stderr=subprocess.DEVNULL,
+            timeout=1,
+            creationflags=flags
+        ).decode("utf-8").strip()
+
+        if short_hash:
+            return short_hash, full_hash
+    except Exception:
+        pass
+
+    # 2. 降级方案：直接解析 .git 目录文件
+    try:
+        git_dir = os.path.join(base_dir, ".git")
+        head_file = os.path.join(git_dir, "HEAD")
+        if os.path.exists(head_file):
+            with open(head_file, "r", encoding="utf-8") as f:
+                head_content = f.read().strip()
+            if head_content.startswith("ref:"):
+                ref_rel = head_content.split(":", 1)[1].strip()
+                ref_file = os.path.join(git_dir, ref_rel)
+                if os.path.exists(ref_file):
+                    with open(ref_file, "r", encoding="utf-8") as f:
+                        full_hash = f.read().strip()
+                        return full_hash[:7], full_hash
+            elif len(head_content) >= 7:
+                return head_content[:7], head_content
+    except Exception:
+        pass
+
+    return "unknown", "unknown"
+
+
+GIT_COMMIT_SHORT, GIT_COMMIT_FULL = get_git_commit()
+GIT_COMMIT = GIT_COMMIT_SHORT
 
 # =============================================================================
 # 2. User Roles & Authentication Passwords

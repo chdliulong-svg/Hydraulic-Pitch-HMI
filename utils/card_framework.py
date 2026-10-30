@@ -241,7 +241,7 @@ class BladeTelemetryCard(TelemetryCard):
         # 3. 位置输出行（严格分为两个独立显示框：油缸位移 mm + 叶片角度 °）
         self.add_dual_output_row("pos_cyl", "pos_ang", "Cyl. position",
                                 unit1="mm", unit2="°",
-                                default1="0", default2="0.0")
+                                default1="0.0", default2="0.0")
 
         # 4. 速度输出行（严格分为两个独立显示框：油缸速度 mm/s + 角速度 °/s）
         self.add_dual_output_row("spd_cyl", "spd_ang", "Cyl. speed",
@@ -266,7 +266,7 @@ class BladeTelemetryCard(TelemetryCard):
         self.set_value("pitch_ref", ref_text)
 
         # 两个输出严格分开更新
-        self.set_value("pos_cyl", f"{b.cyl_pos_mm:.0f}")
+        self.set_value("pos_cyl", f"{b.cyl_pos_mm:.1f}")
         self.set_value("pos_ang", f"{b.angle_deg:.1f}")
 
         self.set_value("spd_cyl", f"{b.cyl_speed_mms:.1f}")

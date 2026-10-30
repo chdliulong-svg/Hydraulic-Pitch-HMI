@@ -10,7 +10,7 @@ venv/
 ENV/
 
 # Logs
-logs/*.log
+logs/*.log*
 !logs/.gitkeep
 
 # IDEs & Editors

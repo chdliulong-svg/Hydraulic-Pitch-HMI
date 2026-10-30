@@ -126,7 +126,7 @@ class ModeCard(QGroupBox):
         self.lbl_prompt = QLabel("")
         self.lbl_prompt.setWordWrap(True)
         self.lbl_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_prompt.setStyleSheet("font-size: 10px; color: #334155; font-weight: 500; line-height: 14px;")
+        self.lbl_prompt.setStyleSheet("font-size: 10px; color: #334155; font-weight: 500;")
         p_layout.addWidget(self.lbl_prompt)
         layout.addWidget(self.card_prompt)
 

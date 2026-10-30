@@ -18,7 +18,8 @@ from config import (
     WINDOW_MIN_WIDTH, WINDOW_MIN_HEIGHT,
     HMI_VERSION, UI_REFRESH_TIMER_MS,
     STATE_ABORTED, STATE_ABORTING,
-    OPCUA_ENDPOINT
+    OPCUA_ENDPOINT,
+    GIT_COMMIT, GIT_COMMIT_FULL
 )
 from utils.widgets import HexagonButton, StatusLed
 from utils.i18n import tr, I18N
@@ -256,10 +257,20 @@ class MainWindow(QMainWindow):
                 lbl_logo.setPixmap(pix.scaledToHeight(44, Qt.TransformationMode.SmoothTransformation))
             else:
                 lbl_logo.setText("HYDRAULIC PITCH SYSTEM")
-                lbl_logo.setStyleSheet("font-size: 16px; font-weight: bold; color: #1E293B; letter-spacing: 1px;")
+                font_logo = lbl_logo.font()
+                font_logo.setPointSize(12)
+                font_logo.setBold(True)
+                font_logo.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+                lbl_logo.setFont(font_logo)
+                lbl_logo.setStyleSheet("color: #1E293B;")
         else:
             lbl_logo.setText("HYDRAULIC PITCH SYSTEM")
-            lbl_logo.setStyleSheet("font-size: 16px; font-weight: bold; color: #1E293B; letter-spacing: 1px;")
+            font_logo = lbl_logo.font()
+            font_logo.setPointSize(12)
+            font_logo.setBold(True)
+            font_logo.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.0)
+            lbl_logo.setFont(font_logo)
+            lbl_logo.setStyleSheet("color: #1E293B;")
         lbl_logo.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         hdr_layout.addWidget(lbl_logo)
         layout.addWidget(hdr)
@@ -275,15 +286,18 @@ class MainWindow(QMainWindow):
         self.page_inspect = InspectPage(self.plc)
         self.page_alarm = AlarmPage(self.alarm_mgr, self.plc, opcua_service=self.opcua_service)
         self.page_manual = ManualPage(self.plc, opcua_service=self.opcua_service)
+        if hasattr(self.page_manual, "tab_changed"):
+            self.page_manual.tab_changed.connect(lambda _: self.update_header_text())
         self.page_maint = MaintenancePage(self.plc, opcua_service=self.opcua_service)
-        self.page_network = NetworkPage(self.plc, opcua_service=self.opcua_service)
-        self.page_file = self.page_network  # backward compat
+        if hasattr(self.page_maint, "tab_changed"):
+            self.page_maint.tab_changed.connect(lambda _: self.update_header_text())
+        self.page_network = self.page_maint  # backward compat
+        self.page_file = self.page_maint  # backward compat
 
         self.stacked_pages.addWidget(self.page_inspect)
         self.stacked_pages.addWidget(self.page_alarm)
         self.stacked_pages.addWidget(self.page_manual)
         self.stacked_pages.addWidget(self.page_maint)
-        self.stacked_pages.addWidget(self.page_network)
         layout.addWidget(self.stacked_pages, 1)
 
         # 4. Bottom Red Line (Only in Center Column!)
@@ -343,6 +357,12 @@ class MainWindow(QMainWindow):
         self.btn_opcua_settings.clicked.connect(self.open_opcua_settings)
         b_layout.addWidget(self.btn_opcua_settings)
 
+        # Subtle commit label in center bottom status bar
+        self.lbl_bar_commit = QLabel(f"Git: {GIT_COMMIT}")
+        self.lbl_bar_commit.setStyleSheet("font-family: Consolas, monospace; font-size: 10px; color: #64748B; margin-left: 4px;")
+        self.lbl_bar_commit.setToolTip(f"Git Commit: {GIT_COMMIT_FULL}")
+        b_layout.addWidget(self.lbl_bar_commit)
+
         layout.addWidget(b_bar)
 
         return panel
@@ -366,8 +386,7 @@ class MainWindow(QMainWindow):
             ("nav_inspect.png", "Overview", 0),
             ("nav_alarm.png", "Alarm", 1),
             ("nav_manual.png", "Manual", 2),
-            ("nav_maintenance.png", "Maintenance", 3),
-            ("nav_network.png", "Network", 4)
+            ("nav_maintenance.png", "Maintenance", 3)
         ]
 
         for icon_file, text, page_idx in nav_items:
@@ -455,8 +474,7 @@ class MainWindow(QMainWindow):
             ("Overview", "Pitch system data as pressure, temperature, etc. are shown in this page"),
             ("Alarm", "Active alarms and historical alarm logs"),
             ("Manual", "Manual pitching and valve test operations"),
-            ("Maintenance", "Sensor calibration and diagnostic tools"),
-            ("Network", "Ethernet configuration and PLC IP parameters"),
+            ("Maintenance", "HPU, lubrication system, and PAC valve actuator testing"),
         ]
 
         self.nav_buttons[0].setChecked(True)
@@ -464,10 +482,17 @@ class MainWindow(QMainWindow):
 
         layout.addStretch(1)  # Proper grouping at the top
 
-        # Bottom-right HMI Version label
+        # Bottom-right HMI Version and Git Commit Container
+        ver_box = QWidget()
+        ver_box.setFixedHeight(38)
+        ver_box.setStyleSheet("background: transparent;")
+        ver_layout = QVBoxLayout(ver_box)
+        ver_layout.setContentsMargins(0, 0, 0, 2)
+        ver_layout.setSpacing(2)
+        ver_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self.lbl_hmi_version = QLabel(f"HMI: {HMI_VERSION}")
         self.lbl_hmi_version.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_hmi_version.setFixedHeight(28)
         self.lbl_hmi_version.setStyleSheet("""
             QLabel {
                 font-family: 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif;
@@ -477,8 +502,25 @@ class MainWindow(QMainWindow):
                 background: transparent;
             }
         """)
-        self.lbl_hmi_version.setToolTip(f"HMI Version: {HMI_VERSION}")
-        layout.addWidget(self.lbl_hmi_version)
+
+        self.lbl_git_commit = QLabel(f"Git: {GIT_COMMIT}")
+        self.lbl_git_commit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.lbl_git_commit.setStyleSheet("""
+            QLabel {
+                font-family: Consolas, 'Segoe UI', monospace;
+                font-size: 10px;
+                font-weight: bold;
+                color: #64748B;
+                background: transparent;
+            }
+        """)
+        tip_text = f"HMI Version: {HMI_VERSION}\nGit Commit: {GIT_COMMIT_FULL}"
+        self.lbl_hmi_version.setToolTip(tip_text)
+        self.lbl_git_commit.setToolTip(tip_text)
+
+        ver_layout.addWidget(self.lbl_hmi_version)
+        ver_layout.addWidget(self.lbl_git_commit)
+        layout.addWidget(ver_box)
 
         return panel
 
@@ -490,6 +532,19 @@ class MainWindow(QMainWindow):
         page_idx = self.stacked_pages.currentIndex()
         if hasattr(self, "PAGE_INFO") and 0 <= page_idx < len(self.PAGE_INFO):
             title, sub = self.PAGE_INFO[page_idx]
+            if page_idx == 2 and hasattr(self, "page_manual") and hasattr(self.page_manual, "tabs"):
+                if self.page_manual.tabs.currentIndex() == 1:
+                    title, sub = ("Calibrate", "Pitch position and GRD calibration")
+                else:
+                    title, sub = ("Manual", "Manual pitching and valve test operations")
+            elif page_idx == 3 and hasattr(self, "page_maint") and hasattr(self.page_maint, "tabs"):
+                tab_idx = self.page_maint.tabs.currentIndex()
+                if tab_idx == 0:
+                    title, sub = ("Maintenance - Output", "HPU, lubrication system, and PAC valve actuator testing")
+                elif tab_idx == 1:
+                    title, sub = ("Maintenance - Network", "Ethernet configuration and PLC IP parameters")
+                elif tab_idx == 2:
+                    title, sub = ("Maintenance - Restart", "PLC controller soft restart")
             self.lbl_page_title.setText(tr(title, self.current_lang))
             self.lbl_page_subtitle.setText(tr(sub, self.current_lang))
 
@@ -550,10 +605,8 @@ class MainWindow(QMainWindow):
             self.page_manual.retranslate_ui(self.current_lang)
         if hasattr(self.page_maint, "retranslate_ui"):
             self.page_maint.retranslate_ui(self.current_lang)
-        if hasattr(self, "page_network") and hasattr(self.page_network, "retranslate_ui"):
+        if hasattr(self, "page_network") and self.page_network is not self.page_maint and hasattr(self.page_network, "retranslate_ui"):
             self.page_network.retranslate_ui(self.current_lang)
-        elif hasattr(self.page_file, "retranslate_ui"):
-            self.page_file.retranslate_ui(self.current_lang)
 
     def on_hexagon_clicked(self):
         if not (self.opcua_service and getattr(self.plc, "is_opcua_online", False)):

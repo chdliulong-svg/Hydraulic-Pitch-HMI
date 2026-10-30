@@ -13,7 +13,11 @@ TRANSLATIONS = {
     "Inspect": "总览",
     "Alarm": "报警",
     "Manual": "手动",
+    "Calibrate": "标定",
+    "Calibration": "标定",
     "Maintenance": "维护",
+    "Output": "输出",
+    "Restart": "重启",
     "Save/Load": "参数存取",
     "Network": "网络",
 
@@ -22,6 +26,12 @@ TRANSLATIONS = {
     "Active alarms and historical alarm logs": "当前活动报警与历史报警记录",
     "Manual pitching and valve test operations": "手动变桨与阀控测试操作",
     "Sensor calibration and diagnostic tools": "传感器标定与诊断工具",
+    "Pitch position and GRD calibration": "叶片位置零偏与 GRD 标定设置",
+    "Maintenance - Output": "维护 - 输出测试",
+    "Maintenance - Network": "维护 - 网络设置",
+    "Maintenance - Restart": "维护 - 控制器重启",
+    "HPU, lubrication system, and PAC valve actuator testing": "液压动力单元(HPU)、润滑泵及PAC阀动作测试",
+    "PLC controller soft restart": "PLC控制器软重启与系统复位",
     "Parameter file backup, restore, and user login": "参数文件备份、恢复与用户登录",
     "Ethernet configuration and PLC IP parameters": "以太网网络配置与 PLC IP 参数设置",
     "Ethernet configuration, PLC IP parameters, and communication diagnostics": "以太网网络配置与 PLC IP 参数设置",
@@ -313,7 +323,7 @@ TRANSLATIONS = {
 
     # --- Manual Page Additional Labels ---
     "Blade": "叶片",
-    "Offset [°]": "偏置",
+    "Offset [°]": "偏置 [°]",
     "Blade selected": "桨叶选择",
     "Blade safe": "桨叶安全",
     "Remote box speed": "手操盒速度",
@@ -437,6 +447,11 @@ TRANSLATIONS = {
     "⚠️ PLC communication is offline. Cannot send soft restart command!\nPlease check OPC UA connection.": "⚠️ 当前 PLC 通信已断开，无法下发软重启指令！\n请检查底层 OPC UA 通信连接。",
 
     # --- Manual Page Calibration Prompts ---
+    "🔓 Authorized": "🔓 已授权",
+    "Authorized": "已授权",
+    "Reverse Calc": "反向推算",
+    "Calc": "推算",
+    "GRD Reverse Calculation": "GRD 反向推算",
     "Offset Valid Range: {min_deg:.1f}° ~ {max_deg:.1f}°": "偏置有效范围: {min_deg:.1f}° ~ {max_deg:.1f}°",
     "GRD Valid Range: {min_val} ~ {max_val} pulse/(cm/s)": "GRD 有效范围: {min_val} ~ {max_val} pulse/(cm/s)",
     "Offset values must be within valid range [{min_deg:.1f}°, {max_deg:.1f}°]!\nOut of range:\n{items}": "偏置值必须在有效范围 [{min_deg:.1f}°, {max_deg:.1f}°] 内！\n超出范围项:\n{items}",

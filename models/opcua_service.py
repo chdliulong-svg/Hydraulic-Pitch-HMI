@@ -97,7 +97,7 @@ def _make_node_spec_registry() -> Dict[str, NodeSpec]:
 
     # 2. Int16 button / handshake pulse commands (0.5s auto-reset to 0 on 1)
     for c in [
-        "hmi_btn_start", "hmi_btn_abort", "hmi_btn_reset", "hmi_btn_ack_all",
+        "hmi_btn_start", "hmi_btn_abort", "hmi_btn_reset", "hmi_btn_reset_safety", "hmi_btn_ack_all",
         "hmi_apply_ppc", "hmi_apply_grd", "hmi_update_network",
         "hmi_apply_hpu", "hmi_reset_hpu", "hmi_apply_lub", "hmi_reset_lub",
         "hmi_apply_pac", "hmi_reset_pac", "hmi_apply_pitch_lock", "hmi_reset_pitch_lock",
@@ -414,6 +414,9 @@ class OpcUaWorker(QObject):
         """Pulse Common.hmi.buttons.applyPPCSelection = 1"""
         self.enqueue_command("hmi_apply_ppc", 1)
 
+    apply_pos_calibration = apply_pitch_position_calib
+    apply_pos_calib = apply_pitch_position_calib
+
     def write_hmi_blade_grd(self, blade_idx: int, val: int):
         """Write Common.hmi.fromHMI.manualPage.blade<A/B/C>grdtemp (UInt32)"""
         if 0 <= blade_idx < 3:
@@ -425,6 +428,8 @@ class OpcUaWorker(QObject):
     def apply_grd_calib(self):
         """Pulse Common.hmi.buttons.applyGRDSelection = 1"""
         self.enqueue_command("hmi_apply_grd", 1)
+
+    apply_grd_calibration = apply_grd_calib
 
     def write_blade_offset(self, blade_idx: int, val: float):
         self.write_hmi_blade_offset(blade_idx, val)
@@ -584,48 +589,119 @@ class OpcUaWorker(QObject):
         finally:
             self._pulse_tasks.pop(cmd_name, None)
 
+    async def _filter_readable_nodes(
+        self,
+        client,
+        specs: List[Tuple[str, Any, Any]],
+        chunk_size: int = 50
+    ) -> List[Tuple[str, Any, Any]]:
+        """
+        自适应校验并过滤候选符号：
+        批量或逐项探测符号可读性，若符号不存在 (BadNodeIdUnknown)、无权限或格式不匹配，
+        则跳过该符号，保留所有健康可读符号，防止单点符号缺失导致全部放弃读取。
+        """
+        valid_specs: List[Tuple[str, Any, Any]] = []
+        skipped_symbols: List[str] = []
+
+        active_specs = [item for item in specs if item[1] is not None]
+
+        for i in range(0, len(active_specs), chunk_size):
+            chunk = active_specs[i:i + chunk_size]
+            nodes_chunk = [item[1] for item in chunk]
+            try:
+                data_values = await client.read_attributes(nodes_chunk, attr=ua.AttributeIds.Value)
+                for item, dv in zip(chunk, data_values):
+                    if dv.StatusCode.is_good():
+                        valid_specs.append(item)
+                    else:
+                        skipped_symbols.append(item[0])
+                        logger.debug(
+                            f"[OPCUA] 符号跳过 (不可读或未在PLC发布): {item[0]} -> {dv.StatusCode.name} ({item[1].nodeid})"
+                        )
+            except Exception as chunk_err:
+                logger.debug(f"[OPCUA] 符号分块批量探测异常 ({chunk_err})，降级逐项探测该块符号...")
+                for item in chunk:
+                    try:
+                        dv = await item[1].read_attribute(ua.AttributeIds.Value)
+                        if dv.StatusCode.is_good():
+                            valid_specs.append(item)
+                        else:
+                            skipped_symbols.append(item[0])
+                            logger.debug(f"[OPCUA] 符号跳过 (不可读): {item[0]} -> {dv.StatusCode.name}")
+                    except Exception as node_err:
+                        skipped_symbols.append(item[0])
+                        logger.debug(f"[OPCUA] 符号跳过 (不存在或访问异常): {item[0]} ({node_err})")
+
+        if skipped_symbols:
+            logger.info(
+                f"[OPCUA] 符号自适应配置: 候选符号共 {len(active_specs)} 个，"
+                f"成功读取 {len(valid_specs)} 个，跳过不可读符号 {len(skipped_symbols)} 个: {skipped_symbols}"
+            )
+        else:
+            logger.info(f"[OPCUA] 符号自适应配置: 全部 {len(valid_specs)} 个遥测符号均正常读取")
+
+        return valid_specs
+
     async def _fetch_alarms(self, client):
-        """Fetch active alarms and history log from CODESYS gAlarmCoreTable & gHistoryAlarmLog"""
+        """
+        分立获取实时报警列表与历史报警记录 (CODESYS gAlarmCoreTable & gHistoryAlarmLog)
+        对报警状态与代码逐项安全解析，若个别符号不可读则跳过该项，互不阻塞，保证报警正常呈现。
+        """
+        active_list = []
+        history_list = []
+
+        # 1. 获取实时活动报警
         try:
             core_prefix = f"{BASE_NODE_PREFIX}gAlarmCoreTable."
-            reg_cnt = int(await client.get_node(f"{core_prefix}RegisteredCount").read_value())
-            if reg_cnt <= 0:
-                return [], []
+            reg_node = client.get_node(f"{core_prefix}RegisteredCount")
+            reg_val = await reg_node.read_value()
+            reg_cnt = int(reg_val) if reg_val is not None else 0
 
-            # 1. Read State for all registered alarms in chunks of ALARM_CHUNK_SIZE
-            nodes_state = [client.get_node(f"{core_prefix}Alarms[{i}].State") for i in range(1, reg_cnt + 1)]
-            states = []
-            for i in range(0, len(nodes_state), ALARM_CHUNK_SIZE):
-                chunk = nodes_state[i:i+ALARM_CHUNK_SIZE]
-                states.extend(await client.read_values(chunk))
+            if reg_cnt > 0:
+                nodes_state = [client.get_node(f"{core_prefix}Alarms[{i}].State") for i in range(1, reg_cnt + 1)]
+                states = []
+                for i in range(0, len(nodes_state), ALARM_CHUNK_SIZE):
+                    chunk = nodes_state[i:i + ALARM_CHUNK_SIZE]
+                    try:
+                        states.extend(await client.read_values(chunk))
+                    except Exception as e:
+                        logger.debug(f"[OPCUA] 报警状态分块读取跳过: {e}")
+                        states.extend([None] * len(chunk))
 
-            # Filter active alarms (State != 0)
-            active_indices = [idx + 1 for idx, st in enumerate(states) if st != 0]
+                active_indices = [idx + 1 for idx, st in enumerate(states) if st is not None and st != 0]
 
-            # 2. Fetch Code for active alarms (Name/Message/Severity enriched locally from alarm_database)
-            detail_nodes = []
-            for idx in active_indices:
-                detail_nodes.append(client.get_node(f"{core_prefix}Alarms[{idx}].Code"))
+                if active_indices:
+                    detail_nodes = [client.get_node(f"{core_prefix}Alarms[{idx}].Code") for idx in active_indices]
+                    codes = []
+                    for i in range(0, len(detail_nodes), ALARM_CHUNK_SIZE):
+                        chunk = detail_nodes[i:i + ALARM_CHUNK_SIZE]
+                        try:
+                            codes.extend(await client.read_values(chunk))
+                        except Exception as e:
+                            logger.debug(f"[OPCUA] 报警代码分块读取跳过: {e}")
+                            codes.extend([None] * len(chunk))
 
-            active_list = []
-            if detail_nodes:
-                codes = []
-                for i in range(0, len(detail_nodes), ALARM_CHUNK_SIZE):
-                    chunk = detail_nodes[i:i+ALARM_CHUNK_SIZE]
-                    codes.extend(await client.read_values(chunk))
+                    for i, idx in enumerate(active_indices):
+                        if i < len(codes) and codes[i] is not None:
+                            try:
+                                active_list.append({
+                                    "code": int(codes[i]),
+                                    "state": int(states[idx - 1]),
+                                })
+                            except (ValueError, TypeError):
+                                pass
+        except Exception as e:
+            logger.debug(f"[OPCUA] 实时报警读取跳过: {e}")
 
-                for i, idx in enumerate(active_indices):
-                    active_list.append({
-                        "code": int(codes[i]),
-                        "state": int(states[idx - 1]),
-                    })
-
-            # 3. Fetch History alarms from gHistoryAlarmLog (Only Code, TimeString, State required)
+        # 2. 获取历史报警记录 (独立容错，与实时报警隔离)
+        try:
             hist_prefix = f"{BASE_NODE_PREFIX}gHistoryAlarmLog."
-            hist_cur = int(await client.get_node(f"{hist_prefix}CurrentCount").read_value())
-            history_list = []
+            hist_node = client.get_node(f"{hist_prefix}CurrentCount")
+            hist_val = await hist_node.read_value()
+            hist_cur = int(hist_val) if hist_val is not None else 0
+
             if hist_cur > 0:
-                fetch_len = min(hist_cur, ALARM_HISTORY_MAX_FETCH)  # Max history entries
+                fetch_len = min(hist_cur, ALARM_HISTORY_MAX_FETCH)
                 hist_nodes = []
                 for i in range(1, fetch_len + 1):
                     hist_nodes.extend([
@@ -635,20 +711,31 @@ class OpcUaWorker(QObject):
                     ])
                 hist_vals = []
                 for i in range(0, len(hist_nodes), ALARM_CHUNK_SIZE):
-                    chunk = hist_nodes[i:i+ALARM_CHUNK_SIZE]
-                    hist_vals.extend(await client.read_values(chunk))
+                    chunk = hist_nodes[i:i + ALARM_CHUNK_SIZE]
+                    try:
+                        hist_vals.extend(await client.read_values(chunk))
+                    except Exception as e:
+                        logger.debug(f"[OPCUA] 历史报警分块读取跳过: {e}")
+                        hist_vals.extend([None] * len(chunk))
 
                 for i in range(fetch_len):
-                    history_list.append({
-                        "code": int(hist_vals[i*3]),
-                        "timestamp": str(hist_vals[i*3+1]),
-                        "state": int(hist_vals[i*3+2]),
-                    })
-
-            return active_list, history_list
+                    if i * 3 + 2 < len(hist_vals):
+                        c_val = hist_vals[i * 3]
+                        t_val = hist_vals[i * 3 + 1]
+                        s_val = hist_vals[i * 3 + 2]
+                        if c_val is not None and s_val is not None:
+                            try:
+                                history_list.append({
+                                    "code": int(c_val),
+                                    "timestamp": str(t_val) if t_val is not None else "",
+                                    "state": int(s_val),
+                                })
+                            except (ValueError, TypeError):
+                                pass
         except Exception as e:
-            logger.error(f"[OPCUA] Error fetching alarms: {e}")
-            return [], []
+            logger.debug(f"[OPCUA] 历史报警日志读取跳过: {e}")
+
+        return active_list, history_list
 
     async def _fetch_pv_alarm_limits(self, client):
         """Fetch dynamic threshold limits from CODESYS PVAlarms.limitSet via OPC UA"""
@@ -659,8 +746,12 @@ class OpcUaWorker(QObject):
 
             vals = []
             for i in range(0, len(nodes), ALARM_CHUNK_SIZE):
-                chunk = nodes[i:i+ALARM_CHUNK_SIZE]
-                vals.extend(await client.read_values(chunk))
+                chunk = nodes[i:i + ALARM_CHUNK_SIZE]
+                try:
+                    vals.extend(await client.read_values(chunk))
+                except Exception as ce:
+                    logger.debug(f"[OPCUA] PVAlarms 分块读取异常，跳过该块: {ce}")
+                    vals.extend([None] * len(chunk))
 
             limits = {}
             for f, v in zip(PV_ALARM_FIELDS, vals):
@@ -778,28 +869,6 @@ class OpcUaWorker(QObject):
                     nodes["net_subnet"] = net_s
                     nodes["PVturbineSpecific.network.subnetMask"] = net_s
 
-                    net_nodes = [
-                        nodes["net_hostName"], nodes["net_IPAddr"], nodes["net_subnetMask"]
-                    ]
-
-                    has_net_nodes = True
-                    try:
-                        await nodes["net_hostName"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        has_net_nodes = False
-
-                    par_nodes = [
-                        nodes["par_0_posOffDeg"], nodes["par_0_grd"],
-                        nodes["par_1_posOffDeg"], nodes["par_1_grd"],
-                        nodes["par_2_posOffDeg"], nodes["par_2_grd"],
-                    ]
-                    has_par_nodes = True
-                    try:
-                        await nodes["par_0_posOffDeg"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        has_par_nodes = False
-
-
                     # Common.hmi (ManualPage PitchPosition, GRD temp, Buttons, and ColorControl)
                     # 1. Pitch Position Calibration (HMI buffer variables)
                     for i in range(3):
@@ -900,6 +969,7 @@ class OpcUaWorker(QObject):
                     # HMI Main Start & Abort buttons and status
                     nodes["hmi_btn_start"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.buttons.start")
                     nodes["hmi_btn_abort"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.buttons.abort")
+                    nodes["hmi_btn_reset_safety"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.buttons.resetSafety")
                     nodes["hmi_status_abort_btn"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.status.abortButton")
                     nodes["hmi_status_start_btn"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.status.startButton")
 
@@ -908,155 +978,113 @@ class OpcUaWorker(QObject):
                     nodes["hmi_hide_pitch_ref_b"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.hidePitchRefBldB")
                     nodes["hmi_hide_pitch_ref_c"] = client.get_node(f"{BASE_NODE_PREFIX}hmi.hidePitchRefBldC")
 
-                    has_hmi_nodes = True
-                    try:
-                        await nodes["hmi_apply_ppc"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        has_hmi_nodes = False
-
-                    has_pac_nodes = True
-                    try:
-                        await nodes["state"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        has_pac_nodes = False
-
-                    # Check if optional ack_all node is published in CODESYS symbol config
-                    try:
-                        await nodes["ack_all"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        nodes["ack_all"] = None
-
-                    # Check if optional WTG.hpu nodes are published
-                    try:
-                        await nodes["hpu_pressure"].read_attribute(ua.AttributeIds.NodeId)
-                    except Exception:
-                        nodes["hpu_pressure"] = None
-                        nodes["hpu_oil_level"] = None
-                        nodes["hpu_temp"] = None
-                        nodes["hpu_state"] = None
-
-                    # Check optional Remote Box nodes
-                    for rb_key in ["sim_rb_connected", "sim_rb_in_control", "pac_rb_connected", "hmi_user_input", "hmi_rb_enabled"]:
-                        try:
-                            await nodes[rb_key].read_attribute(ua.AttributeIds.NodeId)
-                        except Exception:
-                            nodes[rb_key] = None
-
-                    # Build declarative batch read specifications for single round-trip polling
-                    batch_read_specs = [
+                    # Build declarative candidate specs for adaptive symbol reading
+                    candidate_specs: List[Tuple[str, Any, Any]] = [
                         ("plc_time", nodes["server_current_time"], lambda v: v.astimezone() if hasattr(v, "astimezone") else v),
+                        ("sim_remote_box_connected", nodes.get("sim_rb_connected"), bool),
+                        ("sim_remote_box_in_control", nodes.get("sim_rb_in_control"), bool),
+                        ("pac_remote_box_connected", nodes.get("pac_rb_connected"), bool),
+                        ("hmi_user_input", nodes.get("hmi_user_input"), int),
+                        ("hmi_remote_box_enabled", nodes.get("hmi_rb_enabled"), int),
+                        ("state", nodes.get("state"), int),
+                        ("mode", nodes.get("mode"), int),
+                        ("description", nodes.get("description"), str),
+                        ("abortType", nodes.get("abortType"), int),
+                        ("temp_hub", nodes.get("temp_hub"), float),
+                        ("temp_oil", nodes.get("temp_oil"), float),
+                        ("temp_cabinet", nodes.get("temp_cabinet"), float),
+                        ("cpu_temp", nodes.get("temp_cpu"), float),
+                        ("current_t1", nodes.get("current_t1"), float),
+                        ("current_t2", nodes.get("current_t2"), float),
+                        ("power_supply_ok", nodes.get("power_supply_ok"), bool),
+                        ("safety_ok", nodes.get("safety_ok"), bool),
+                        ("pac_version_hw", nodes.get("pac_version_hw"), str),
+                        ("pac_version_sw", nodes.get("pac_version_sw"), str),
+                        ("lub_tank1_ok", nodes.get("lub_tank1_ok"), bool),
+                        ("lub_piston_a1", nodes.get("lub_piston_a1"), bool),
+                        ("lub_piston_b1", nodes.get("lub_piston_b1"), bool),
+                        ("lub_piston_c1", nodes.get("lub_piston_c1"), bool),
+                        ("lub_tank2_ok", nodes.get("lub_tank2_ok"), bool),
+                        ("lub_piston_a2", nodes.get("lub_piston_a2"), bool),
+                        ("lub_piston_b2", nodes.get("lub_piston_b2"), bool),
+                        ("lub_piston_c2", nodes.get("lub_piston_c2"), bool),
+                        ("pac_lub1_pump_on", nodes.get("pac_lub1_pump_on"), bool),
+                        ("pac_lub2_pump_on", nodes.get("pac_lub2_pump_on"), bool),
+                        ("hpu_pressure", nodes.get("hpu_pressure"), float),
+                        ("hpu_oil_level", nodes.get("hpu_oil_level"), float),
+                        ("hpu_temp", nodes.get("hpu_temp"), float),
+                        ("hpu_state_raw", nodes.get("hpu_state"), int),
                     ]
 
-                    # Remote Box telemetry specs
-                    if nodes.get("sim_rb_connected") is not None:
-                        batch_read_specs.append(("sim_remote_box_connected", nodes["sim_rb_connected"], bool))
-                    if nodes.get("sim_rb_in_control") is not None:
-                        batch_read_specs.append(("sim_remote_box_in_control", nodes["sim_rb_in_control"], bool))
-                    if nodes.get("pac_rb_connected") is not None:
-                        batch_read_specs.append(("pac_remote_box_connected", nodes["pac_rb_connected"], bool))
-                    if nodes.get("hmi_user_input") is not None:
-                        batch_read_specs.append(("hmi_user_input", nodes["hmi_user_input"], int))
-                    if nodes.get("hmi_rb_enabled") is not None:
-                        batch_read_specs.append(("hmi_remote_box_enabled", nodes["hmi_rb_enabled"], int))
-
-                    if has_pac_nodes:
-                        batch_read_specs.extend([
-                            ("state", nodes["state"], int),
-                            ("mode", nodes["mode"], int),
-                            ("description", nodes["description"], str),
-                            ("abortType", nodes["abortType"], int),
-                            ("temp_hub", nodes["temp_hub"], float),
-                            ("temp_oil", nodes["temp_oil"], float),
-                            ("temp_cabinet", nodes["temp_cabinet"], float),
-                            ("cpu_temp", nodes["temp_cpu"], float),
-                            ("current_t1", nodes["current_t1"], float),
-                            ("current_t2", nodes["current_t2"], float),
-                            ("power_supply_ok", nodes["power_supply_ok"], bool),
-                            ("safety_ok", nodes["safety_ok"], bool),
-                            ("pac_version_hw", nodes["pac_version_hw"], str),
-                            ("pac_version_sw", nodes["pac_version_sw"], str),
-                            ("lub_tank1_ok", nodes["lub_tank1_ok"], bool),
-                            ("lub_piston_a1", nodes["lub_piston_a1"], bool),
-                            ("lub_piston_b1", nodes["lub_piston_b1"], bool),
-                            ("lub_piston_c1", nodes["lub_piston_c1"], bool),
-                            ("lub_tank2_ok", nodes["lub_tank2_ok"], bool),
-                            ("lub_piston_a2", nodes["lub_piston_a2"], bool),
-                            ("lub_piston_b2", nodes["lub_piston_b2"], bool),
-                            ("lub_piston_c2", nodes["lub_piston_c2"], bool),
-                            ("pac_lub1_pump_on", nodes["pac_lub1_pump_on"], bool),
-                            ("pac_lub2_pump_on", nodes["pac_lub2_pump_on"], bool),
+                    for i in range(3):
+                        candidate_specs.extend([
+                            (f"bld_{i}_pres_accu", nodes.get(f"bld_{i}_pres_accu"), float),
+                            (f"bld_{i}_pres_piston", nodes.get(f"bld_{i}_pres_piston"), float),
+                            (f"bld_{i}_pres_rod", nodes.get(f"bld_{i}_pres_rod"), float),
+                            (f"bld_{i}_cyl_pos", nodes.get(f"bld_{i}_cyl_pos"), float),
+                            (f"bld_{i}_cyl_spd", nodes.get(f"bld_{i}_cyl_spd"), float),
+                            (f"bld_{i}_spool_fb", nodes.get(f"bld_{i}_spool_fb"), float),
+                            (f"bld_{i}_pos_deg", nodes.get(f"bld_{i}_pos_deg"), float),
+                            (f"bld_{i}_rate_deg", nodes.get(f"bld_{i}_rate_deg"), float),
+                            (f"bld_{i}_locked", nodes.get(f"bld_{i}_locked"), bool),
                         ])
 
-                    if nodes.get("hpu_pressure") is not None:
-                        batch_read_specs.extend([
-                            ("hpu_pressure", nodes["hpu_pressure"], float),
-                            ("hpu_oil_level", nodes["hpu_oil_level"], float),
-                            ("hpu_temp", nodes["hpu_temp"], float),
-                            ("hpu_state_raw", nodes["hpu_state"], int),
-                        ])
+                    candidate_specs.extend([
+                        ("net_hostName", nodes.get("net_hostName"), str),
+                        ("net_IPAddr", nodes.get("net_IPAddr"), str),
+                        ("net_subnetMask", nodes.get("net_subnetMask"), str),
+                    ])
 
                     for i in range(3):
-                        batch_read_specs.extend([
-                            (f"bld_{i}_pres_accu", nodes[f"bld_{i}_pres_accu"], float),
-                            (f"bld_{i}_pres_piston", nodes[f"bld_{i}_pres_piston"], float),
-                            (f"bld_{i}_pres_rod", nodes[f"bld_{i}_pres_rod"], float),
-                            (f"bld_{i}_cyl_pos", nodes[f"bld_{i}_cyl_pos"], float),
-                            (f"bld_{i}_cyl_spd", nodes[f"bld_{i}_cyl_spd"], float),
-                            (f"bld_{i}_spool_fb", nodes[f"bld_{i}_spool_fb"], float),
-                            (f"bld_{i}_pos_deg", nodes[f"bld_{i}_pos_deg"], float),
-                            (f"bld_{i}_rate_deg", nodes[f"bld_{i}_rate_deg"], float),
-                            (f"bld_{i}_locked", nodes[f"bld_{i}_locked"], bool),
+                        candidate_specs.extend([
+                            (f"par_{i}_posOffDeg", nodes.get(f"par_{i}_posOffDeg"), float),
+                            (f"par_{i}_grd", nodes.get(f"par_{i}_grd"), int),
+                            (f"bld_{i}_par_pos_off", nodes.get(f"bld_{i}_par_pos_off"), float),
+                            (f"bld_{i}_par_grd", nodes.get(f"bld_{i}_par_grd"), int),
+                            (f"hmi_pos_off_{i}", nodes.get(f"hmi_pos_off_{i}"), float),
+                            (f"hmi_grd_temp_{i}", nodes.get(f"hmi_grd_temp_{i}"), int),
                         ])
 
-                    if has_net_nodes:
-                        batch_read_specs.extend([
-                            ("net_hostName", nodes["net_hostName"], str),
-                            ("net_IPAddr", nodes["net_IPAddr"], str),
-                            ("net_subnetMask", nodes["net_subnetMask"], str),
-                        ])
+                    candidate_specs.extend([
+                        ("hmi_active_blade", nodes.get("hmi_active_blade"), int),
+                        ("hmi_current_pos", nodes.get("hmi_current_pos"), float),
+                        ("hmi_blade_safe_a", nodes.get("hmi_blade_safe_a"), bool),
+                        ("hmi_blade_safe_b", nodes.get("hmi_blade_safe_b"), bool),
+                        ("hmi_blade_safe_c", nodes.get("hmi_blade_safe_c"), bool),
+                        ("hmi_fast_speed", nodes.get("hmi_fast_speed"), float),
+                        ("hmi_slow_speed", nodes.get("hmi_slow_speed"), float),
+                        ("hmi_fast_chosen", nodes.get("hmi_fast_chosen"), bool),
+                        ("hmi_slow_chosen", nodes.get("hmi_slow_chosen"), bool),
+                        ("hmi_pitch_lock", nodes.get("hmi_pitch_lock"), bool),
+                        ("maint_btn_enb", nodes.get("hmi_maint_btn_enb"), int),
+                        ("maint_help_enb", nodes.get("hmi_maint_help_enb"), int),
+                        ("msgbox_status", nodes.get("hmi_msgbox_status"), int),
+                        ("msgbox_header", nodes.get("hmi_msgbox_header"), str),
+                        ("msgbox_content", nodes.get("hmi_msgbox_content"), str),
+                        ("msgbox_btn_ok_status", nodes.get("hmi_msgbox_btn_ok_status"), int),
+                        ("msgbox_btn_abort_status", nodes.get("hmi_msgbox_btn_abort_status"), int),
+                        ("msgbox_icon", nodes.get("hmi_msgbox_icon"), int),
+                        ("plc_abort_btn_status", nodes.get("hmi_status_abort_btn"), int),
+                        ("plc_start_btn_status", nodes.get("hmi_status_start_btn"), int),
+                        ("hmi_hide_pitch_ref_a", nodes.get("hmi_hide_pitch_ref_a"), int),
+                        ("hmi_hide_pitch_ref_b", nodes.get("hmi_hide_pitch_ref_b"), int),
+                        ("hmi_hide_pitch_ref_c", nodes.get("hmi_hide_pitch_ref_c"), int),
+                    ])
 
-                    if has_par_nodes:
-                        for i in range(3):
-                            batch_read_specs.extend([
-                                (f"par_{i}_posOffDeg", nodes[f"par_{i}_posOffDeg"], float),
-                                (f"par_{i}_grd", nodes[f"par_{i}_grd"], int),
-                            ])
-
-                    if has_hmi_nodes:
-                        for i in range(3):
-                            batch_read_specs.extend([
-                                (f"bld_{i}_par_pos_off", nodes[f"bld_{i}_par_pos_off"], float),
-                                (f"bld_{i}_par_grd", nodes[f"bld_{i}_par_grd"], int),
-                                (f"hmi_pos_off_{i}", nodes[f"hmi_pos_off_{i}"], float),
-                                (f"hmi_grd_temp_{i}", nodes[f"hmi_grd_temp_{i}"], int),
-                            ])
-                        batch_read_specs.extend([
-                            ("hmi_active_blade", nodes["hmi_active_blade"], int),
-                            ("hmi_current_pos", nodes["hmi_current_pos"], float),
-                            ("hmi_blade_safe_a", nodes["hmi_blade_safe_a"], bool),
-                            ("hmi_blade_safe_b", nodes["hmi_blade_safe_b"], bool),
-                            ("hmi_blade_safe_c", nodes["hmi_blade_safe_c"], bool),
-                            ("hmi_fast_speed", nodes["hmi_fast_speed"], float),
-                            ("hmi_slow_speed", nodes["hmi_slow_speed"], float),
-                            ("hmi_fast_chosen", nodes["hmi_fast_chosen"], bool),
-                            ("hmi_slow_chosen", nodes["hmi_slow_chosen"], bool),
-                            ("hmi_pitch_lock", nodes["hmi_pitch_lock"], bool),
-                            ("maint_btn_enb", nodes["hmi_maint_btn_enb"], int),
-                            ("maint_help_enb", nodes["hmi_maint_help_enb"], int),
-                            ("msgbox_status", nodes["hmi_msgbox_status"], int),
-                            ("msgbox_header", nodes["hmi_msgbox_header"], str),
-                            ("msgbox_content", nodes["hmi_msgbox_content"], str),
-                            ("msgbox_btn_ok_status", nodes["hmi_msgbox_btn_ok_status"], int),
-                            ("msgbox_btn_abort_status", nodes["hmi_msgbox_btn_abort_status"], int),
-                            ("msgbox_icon", nodes["hmi_msgbox_icon"], int),
-                            ("plc_abort_btn_status", nodes["hmi_status_abort_btn"], int),
-                            ("plc_start_btn_status", nodes["hmi_status_start_btn"], int),
-                            ("hmi_hide_pitch_ref_a", nodes["hmi_hide_pitch_ref_a"], int),
-                            ("hmi_hide_pitch_ref_b", nodes["hmi_hide_pitch_ref_b"], int),
-                            ("hmi_hide_pitch_ref_c", nodes["hmi_hide_pitch_ref_c"], int),
-                        ])
-
+                    # 自适应校验可读符号：不可读取的符号予以跳过，不阻塞其他符号正常采集
+                    batch_read_specs = await self._filter_readable_nodes(client, candidate_specs)
                     batch_nodes = [spec[1] for spec in batch_read_specs]
+                    readable_keys = {spec[0] for spec in batch_read_specs}
+                    has_net_nodes = any(k.startswith("net_") for k in readable_keys)
+
+                    # 探测可选报警确认节点
+                    if nodes.get("ack_all"):
+                        try:
+                            dv_ack = await nodes["ack_all"].read_attribute(ua.AttributeIds.NodeId)
+                            if not dv_ack.StatusCode.is_good():
+                                nodes["ack_all"] = None
+                        except Exception:
+                            nodes["ack_all"] = None
 
                     # Cache alarm count nodes
                     node_act_cnt = client.get_node(f"{BASE_NODE_PREFIX}gAlarmCoreTable.ActiveAlarmsCount")
@@ -1079,15 +1107,9 @@ class OpcUaWorker(QObject):
                             if target_node is None:
                                 if cmd_name == "ack_all":
                                     logger.info("[OPCUA] CODESYS 符号配置未发布 'Common.xAcknowledgeAll'，跳过 PLC 写入（本地报警已确认）")
-                                continue
-
-                            if not has_net_nodes and cmd_name.startswith("net_"):
-                                err_msg = f"CODESYS 符号配置未发布节点 (BadNodeIdUnknown): {cmd_name}"
-                                logger.warning(f"[OPCUA] {err_msg}")
-                                self.command_result.emit(cmd_name, False, err_msg)
-                                continue
-
-                            if not has_par_nodes and cmd_name.startswith("par_"):
+                                else:
+                                    logger.warning(f"[OPCUA] 写入指令 '{cmd_name}' 对应的 OPC UA 节点未定义，跳过写入")
+                                self.command_result.emit(cmd_name, False, f"未定义节点: {cmd_name}")
                                 continue
 
                             try:
@@ -1114,9 +1136,8 @@ class OpcUaWorker(QObject):
                             except Exception as we:
                                 write_err = OpcUaWriteError(cmd_name, val, we)
                                 self.last_write_error = write_err
-                                logger.error(
-                                    f"[OPCUA 写入异常 / Write Error] 指令 '{cmd_name}' 写入失败 (值={val}, 节点={target_node}): {we}",
-                                    exc_info=True
+                                logger.warning(
+                                    f"[OPCUA 写入跳过] 指令 '{cmd_name}' 写入失败或符号未发布 (值={val}): {we}"
                                 )
                                 self.command_result.emit(cmd_name, False, str(we))
                                 if OPCUA_STRICT_RAISE_EXCEPTIONS:
@@ -1132,9 +1153,28 @@ class OpcUaWorker(QObject):
                                 if val is not None:
                                     try:
                                         data_payload[key] = fn(val)
-                                    except Exception:
+                                    except Exception as cv_err:
+                                        logger.debug(f"[OPCUA] 符号值类型转换异常: {key} ({cv_err})")
                                         data_payload[key] = val
+                        except Exception as re:
+                            err_str = str(re)
+                            if any(k in err_str for k in ["BadSession", "BadSecureChannel", "ConnectionResetError", "Cannot connect", "BadConnectionClosed", "TimeoutError"]):
+                                logger.info(f"[OPCUA] 检测到通信会话断开 ({re})，准备重新建立连接...")
+                                break
+                            elif "BadNodeIdUnknown" in err_str or "BadNodeIdInvalid" in err_str:
+                                logger.info(f"[OPCUA] 检测到符号地址空间变动 ({re})，动态自适应剔除不可读符号...")
+                                batch_read_specs = await self._filter_readable_nodes(client, candidate_specs)
+                                batch_nodes = [spec[1] for spec in batch_read_specs]
+                                readable_keys = {spec[0] for spec in batch_read_specs}
+                                has_net_nodes = any(k.startswith("net_") for k in readable_keys)
+                                data_payload["has_network_nodes"] = has_net_nodes
+                                continue
+                            else:
+                                logger.warning(f"[OPCUA] 批量读取周期异常，跳过本轮: {re}")
+                                await asyncio.sleep(self.poll_interval)
+                                continue
 
+                        try:
                             # Structure 3 blades directly from lower machine PLC Common.blade[i]
                             ref_status_keys = ["hmi_hide_pitch_ref_a", "hmi_hide_pitch_ref_b", "hmi_hide_pitch_ref_c"]
                             for i in range(3):
@@ -1182,48 +1222,62 @@ class OpcUaWorker(QObject):
                                 data_payload["hpu_state"] = hpu_map.get(st_raw, str(st_raw))
 
                             # Map network aliases
-                            if has_net_nodes:
-                                data_payload["net_hostname"] = data_payload.get("net_hostName", "")
-                                data_payload["net_ip"] = data_payload.get("net_IPAddr", "")
-                                data_payload["net_subnet"] = data_payload.get("net_subnetMask", "")
+                            if "net_hostName" in data_payload:
+                                data_payload["net_hostname"] = data_payload["net_hostName"]
+                            if "net_IPAddr" in data_payload:
+                                data_payload["net_ip"] = data_payload["net_IPAddr"]
+                            if "net_subnetMask" in data_payload:
+                                data_payload["net_subnet"] = data_payload["net_subnetMask"]
 
                             self.data_updated.emit(data_payload)
                             self.frames_received += 1
+                        except Exception as proc_err:
+                            logger.warning(f"[OPCUA] 遥测数据组装异常: {proc_err}", exc_info=True)
 
-                            # 3. Poll Alarms (every ~1s, on count changes, or on full resync/force request)
-                            alarm_poll_counter += 1
-                            alarm_full_resync_counter += 1
-                            need_alarm_poll = (
-                                alarm_poll_counter >= ALARM_POLL_DECIMATION
-                                or last_act_cnt == -1
-                                or self._force_alarm_poll
-                                or alarm_full_resync_counter >= 30
+                        # 3. Poll Alarms (every ~1s, on count changes, or on full resync/force request)
+                        alarm_poll_counter += 1
+                        alarm_full_resync_counter += 1
+                        need_alarm_poll = (
+                            alarm_poll_counter >= ALARM_POLL_DECIMATION
+                            or last_act_cnt == -1
+                            or self._force_alarm_poll
+                            or alarm_full_resync_counter >= 30
+                        )
+                        if need_alarm_poll:
+                            alarm_poll_counter = 0
+                            is_force = self._force_alarm_poll or (alarm_full_resync_counter >= 30) or (last_act_cnt == -1)
+                            if is_force:
+                                alarm_full_resync_counter = 0
+                                await self._fetch_pv_alarm_limits(client)
+                            self._force_alarm_poll = False
+
+                            act_cnt = None
+                            hist_cnt = None
+                            try:
+                                act_val = await node_act_cnt.read_value()
+                                if act_val is not None:
+                                    act_cnt = int(act_val)
+                            except Exception as ae:
+                                logger.debug(f"[OPCUA] 实时报警计数读取跳过: {ae}")
+
+                            try:
+                                hist_val = await node_hist_cnt.read_value()
+                                if hist_val is not None:
+                                    hist_cnt = int(hist_val)
+                            except Exception as he:
+                                logger.debug(f"[OPCUA] 历史报警计数读取跳过: {he}")
+
+                            count_changed = (
+                                (act_cnt is not None and act_cnt != last_act_cnt) or
+                                (hist_cnt is not None and hist_cnt != last_hist_cnt)
                             )
-                            if need_alarm_poll:
-                                alarm_poll_counter = 0
-                                is_force = self._force_alarm_poll or (alarm_full_resync_counter >= 30) or (last_act_cnt == -1)
-                                if is_force:
-                                    alarm_full_resync_counter = 0
-                                    await self._fetch_pv_alarm_limits(client)
-                                self._force_alarm_poll = False
-                                try:
-                                    act_cnt = int(await node_act_cnt.read_value())
-                                    hist_cnt = int(await node_hist_cnt.read_value())
-                                    if is_force or act_cnt != last_act_cnt or hist_cnt != last_hist_cnt:
-                                        active_list, history_list = await self._fetch_alarms(client)
-                                        self.alarms_updated.emit(active_list, history_list)
-                                        last_act_cnt = act_cnt
-                                        last_hist_cnt = hist_cnt
-                                except Exception as ae:
-                                    logger.debug(f"[OPCUA] Alarm poll check: {ae}")
-
-                        except Exception as re:
-                            err_str = str(re)
-                            if "BadNodeIdUnknown" in err_str or "BadSession" in err_str:
-                                logger.info("[OPCUA] 检测到 CODESYS PLC 重启或执行在线变更 (Online Change)，正在重新同步节点...")
-                            else:
-                                logger.warning(f"[OPCUA] Read cycle error: {re}")
-                            break  # reconnect and refresh node handles
+                            if is_force or count_changed:
+                                active_list, history_list = await self._fetch_alarms(client)
+                                self.alarms_updated.emit(active_list, history_list)
+                                if act_cnt is not None:
+                                    last_act_cnt = act_cnt
+                                if hist_cnt is not None:
+                                    last_hist_cnt = hist_cnt
 
                         await asyncio.sleep(self.poll_interval)
 
@@ -1325,6 +1379,12 @@ class OpcUaService(QThread):
             self.worker.enqueue_command("cmd_reset", True)
             self.worker.trigger_alarm_poll()
 
+    def send_reset_safety(self):
+        """Send Reset Safety Loop command: pulse Common.hmi.buttons.resetSafety = 1"""
+        if self.worker:
+            self.worker.enqueue_command("hmi_btn_reset_safety", 1)
+            self.worker.trigger_alarm_poll()
+
     def send_clear(self):
         if self.worker:
             self.worker.enqueue_command("cmd_clear", True)
@@ -1368,6 +1428,9 @@ class OpcUaService(QThread):
         if self.worker:
             self.worker.apply_pitch_position_calib()
 
+    apply_pos_calibration = apply_pitch_position_calib
+    apply_pos_calib = apply_pitch_position_calib
+
     def write_hmi_blade_grd(self, blade_idx: int, val: int):
         """Write Common.hmi.fromHMI.manualPage.blade<A/B/C>grdtemp (UInt32)"""
         if self.worker and 0 <= blade_idx < 3:
@@ -1377,6 +1440,8 @@ class OpcUaService(QThread):
         """Pulse Common.hmi.buttons.applyGRDSelection = 1"""
         if self.worker:
             self.worker.apply_grd_calib()
+
+    apply_grd_calibration = apply_grd_calib
 
     def write_blade_offset(self, blade_idx: int, val: float):
         """Write blade offset to HMI buffer and PVturbineSpecific"""

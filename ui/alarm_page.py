@@ -403,7 +403,7 @@ class AlarmPage(QWidget):
             QMessageBox.warning(self, title, msg)
             return
 
-        self.opcua_service.send_reset()
+        self.opcua_service.send_reset_safety()
         self.opcua_service.force_poll_alarms()
 
     def reset_safety_clicked(self):

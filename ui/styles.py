@@ -7,6 +7,11 @@ Matching modern industrial wind power design guidelines:
 - Industrial control states (hover, pressed, checked, disabled)
 """
 
+import os
+
+_res_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources")
+_chk_white_path = os.path.join(_res_dir, "chk_white.png").replace("\\", "/")
+
 QSS_STYLE = """
 * {
     font-family: 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif;
@@ -216,6 +221,6 @@ QCheckBox::indicator {
 QCheckBox::indicator:checked {
     background-color: #2E7D32;
     border-color: #1B5E20;
-    image: none;
+    image: url("@CHK_WHITE@");
 }
-"""
+""".replace("@CHK_WHITE@", _chk_white_path)
